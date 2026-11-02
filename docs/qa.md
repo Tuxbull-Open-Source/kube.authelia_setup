@@ -1,5 +1,38 @@
 # Validation evidence
 
+## Native OIDC and trust-workflow follow-up — 2026-11-02
+
+A new disposable Hetzner fsn1/cx23 Ubuntu 24.04.4 LTS x86_64 VM ran k3s v1.34.1+k3s1, Authelia 4.39.28 and Chromium 156.0.8078.4. Final pod: Ready, restartCount=0, image digest `sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54`.
+
+**Local and lab unit suite:** 18 tests passed. Bash syntax, compileall, Ruff lint/format and git diff whitespace checks passed. Unit tests include private config replay/migration, unsafe OIDC registry rejection, stable keys, missing manual LDAP/SMTP CA paths before cluster calls, fingerprint mismatch and leaf rejection (including a spoofed `CA:TRUE` subject), output limits, safe diagnostics and Ctrl-C exit 130 without traceback.
+
+**Actual live acceptance:**
+
+- Browser LDAP login, both `/auth/callback` and `/api/auth/oidc/callback` with S256, authorization-code exchange, RS256 signature/issuer/audience/nonce validation, userinfo groups, and code replay rejection.
+- Public discovery/JWKS without private key material; exact callback restriction; authenticated non-member denial; missing PKCE rejection; explicit per-client no-PKCE compatibility path. No browser JavaScript exceptions.
+- Real endpoint chain fetch from LDAPS, LDAP StartTLS, SMTP STARTTLS and implicit SMTP TLS, including custom ports. Wrong fingerprints rejected. A real leaf-only TLS endpoint gives manual-CA guidance; a real SMTP server without STARTTLS fails without plaintext fallback.
+- Persisted pinned LDAP/SMTP files install successfully and are reused without overwriting on rerun. Real missing-CA CrashLoop in a separate disposable namespace yields actionable LDAP CA guidance well before the five-minute deadline; supplying the correct CA recovers it.
+- Authelia SMTP STARTTLS delivery through real browser enrollment and emailed-code/TOTP verification. Authelia implicit SMTP TLS startup and independent CA/hostname-verified SMTP message receipt.
+- Reinstall preserves session/storage/OIDC HMAC/signing key data, PVC UID and unchanged pod template. Missing matching encryption Secret fails closed. Restart and doctor passed; portal HTTPS health passed with CA and hostname verification.
+- The existing forward-auth/MFA harness also passed: invalid LDAP password rejection, LDAP+TOTP login, first-factor-only denial, allowed/default-denied gateway access, logout, 30s idle and 2m absolute expiry under activity.
+
+The tested controller/renderer matched local source bytes exactly before cleanup:
+
+```text
+6224f2734cf9eeb88f1bbdc2d2b35291eff50c1c782b665fee2dd152bdebbd46  scripts/cli.py
+626c7ca7a8ecc521e293e080834c839a7307fe0ebe3c018cb185d4773401d95e  scripts/setup.py
+```
+
+**Findings:** Authelia 4.39.28 rejects default-deny gateway configuration without any rules, so OIDC-only mode renders an explicit deny-all gateway rule. Some OIDC failures return to the authenticated portal; tests corroborate no code issuance with the provider's exact PKCE/group-denial log classification. A FreeIPA disabled-account filter cannot be applied unchanged to OpenLDAP without that attribute schema; the fixture now explicitly uses its own custom filter. CA validation inspects Basic Constraints itself rather than arbitrary certificate subject text.
+
+**Limits:** These are generic test relying-party callbacks, not a deployed consumer application. No production FreeIPA/AD deployment, AD account policy, FreeIPA OTP reuse, real SMTP credentials/provider delivery or application-specific session/WebSocket cutover was exercised. The implicit-SMTP message probe uses an independent SMTP client; actual Authelia enrollment notification delivery was tested over STARTTLS. Wrong-verifier PKCE and twelve-hour endurance are not claimed. There is no public CI or independent security-review agent in this environment; checks include source self-review, not an independent audit. No product TLS provisioning or backup/restore was added.
+
+**Cleanup:** Exact temporary server, SSH key and both primary IPs returned API 404; run-labelled enumeration returned zero servers, SSH keys, primary IPs, volumes and firewalls. No paid lab resources remain. Production namespaces and consumer repositories were not touched.
+
+---
+
+## Initial publication evidence
+
 Final checks completed **2026-11-02**, before initial publication. Tests used real Kubernetes resources and Chromium; no simulated cluster or fabricated API responses.
 
 ## Environment
@@ -70,7 +103,7 @@ Session tests used 30s inactivity / 2m maximum for a bounded test. The productio
 ## Scope and limitations
 
 - Backup/restore code, CLI options, dependencies and associated tests were **removed at the user's request**. Velero is entirely operator-owned; no Velero setup or recovery claim is made.
-- No Hermes deployment was modified or tested. Native OIDC provider/client support is a future extension, not a hidden implementation claim.
+- No consumer application deployment was modified or tested. Native OIDC was absent at initial publication; the follow-up evidence above supersedes that original limitation.
 - OpenLDAP + Authelia TOTP was tested; FreeIPA OTP-control reuse, production directory-specific filtering and existing hardware keys were not.
 - Internal forward-auth allow/default-deny was tested, not a complete downstream Hermes proxy/header/WebSocket integration or a production network-policy bypass audit.
 - Static checks and source self-review were performed. An independent reviewer CLI/subagent was unavailable; this is not an independent security audit. Public CI is not configured in the initial repository.

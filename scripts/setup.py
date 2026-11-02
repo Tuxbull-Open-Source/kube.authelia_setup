@@ -15,30 +15,39 @@ LABEL = {"app.kubernetes.io/managed-by": "kube.authelia_setup"}
 def defaults():
     return dict(
         namespace="authelia",
-        url="https://sso.example.com",
-        cookie_domain="example.com",
+        url="https://sso.app.example.com",
+        cookie_domain="app.example.com",
+        cookie_name="authelia_session",
+        oidc_clients=[],
+        oidc_policies={},
         session_idle="2h",
         session_max="12h",
         image="authelia/authelia:4.39.28",
         storage_size="1Gi",
-        ldap_address="ldaps://ldap.example.com:636",
+        ldap_address="ldaps://idm01.sun.example.com:636",
         ldap_starttls=False,
-        ldap_implementation="custom",
+        ldap_implementation="freeipa",
         ldap_base_dn="dc=example,dc=com",
-        ldap_user="uid=authelia,ou=people,dc=example,dc=com",
-        ldap_users_filter="(&({username_attribute}={input})(objectClass=person))",
+        ldap_user="uid=authelia-bind,cn=users,cn=compat,dc=example,dc=com",
+        ldap_users_filter="(&({username_attribute}={input})(objectClass=person)(!(nsAccountLock=TRUE)))",
         ldap_groups_filter="(&(member={dn})(objectClass=groupOfNames))",
         ldap_username_attribute="uid",
         ldap_display_attribute="cn",
         ldap_mail_attribute="mail",
         ldap_password="",
-        smtp_address="submission://smtp.example.com:587",
+        smtp_address="submission://mail01.sun.example.com:587",
         smtp_username="",
         smtp_password="",
-        smtp_sender="authelia@example.com",
-        ca_pem="",
-        protected_domain="app.example.com",
-        allowed_group="authelia-users",
+        smtp_sender="send@example.com",
+        ca_pem="",  # Legacy inline bundle remains supported.
+        ca_mode="system",
+        ca_file="ldap-ca.pem",
+        ca_fingerprint="",
+        smtp_ca_mode="system",
+        smtp_ca_file="smtp-ca.pem",
+        smtp_ca_fingerprint="",
+        protected_domain="",
+        allowed_group="sysadmins",
         policy="two_factor",
     )
 
@@ -86,10 +95,12 @@ def render(c):
                     policy=c["policy"],
                     subject=["group:" + c["allowed_group"]],
                 )
-            ],
+            ]
+            if c["protected_domain"]
+            else [dict(domain_regex=".*", policy="deny")],
         ),
         session=dict(
-            name="authelia_session",
+            name=c["cookie_name"],
             same_site="lax",
             inactivity=c["session_idle"],
             expiration=c["session_max"],
@@ -107,6 +118,41 @@ def render(c):
             )
         ),
     )
+    if c["oidc_clients"]:
+        conf["identity_providers"] = dict(
+            oidc=dict(
+                enforce_pkce="never",  # Enforcement is explicit on each registered client.
+                enable_pkce_plain_challenge=False,
+                clients=[
+                    dict(
+                        client_id=x["client_id"],
+                        client_name=x.get("client_name", x["client_id"]),
+                        public=True,
+                        token_endpoint_auth_method="none",
+                        redirect_uris=x["redirect_uris"],
+                        authorization_policy=x["authorization_policy"],
+                        scopes=["openid", "profile", "email", "groups"],
+                        grant_types=["authorization_code"],
+                        response_types=["code"],
+                        require_pkce=x.get("require_pkce", True),
+                        pkce_challenge_method="S256" if x.get("require_pkce", True) else "",
+                    )
+                    for x in c["oidc_clients"]
+                ],
+                authorization_policies={
+                    name: dict(
+                        default_policy="deny",
+                        rules=[
+                            dict(
+                                policy=policy["policy"],
+                                subject=[["group:" + policy["group"]]],
+                            )
+                        ],
+                    )
+                    for name, policy in c["oidc_policies"].items()
+                },
+            )
+        )
     if c["ca_pem"]:
         conf["certificates_directory"] = "/certificates"
     config = json.dumps(conf, sort_keys=True)
@@ -119,6 +165,12 @@ def render(c):
             ("NOTIFIER_SMTP_PASSWORD", "smtp"),
         ]
     ]
+    if c["oidc_clients"]:
+        env.append(
+            dict(
+                name="AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE", value="/secrets/oidc-hmac"
+            )
+        )
     volumes = [
         dict(name="data", persistentVolumeClaim=dict(claimName="authelia-data")),
         dict(name="config", configMap=dict(name="authelia-config")),
@@ -157,6 +209,8 @@ def render(c):
         mounts.append(dict(name="ca", mountPath="/certificates", readOnly=True))
     container = dict(
         name="authelia",
+        args=["--config", "/config/configuration.yml"]
+        + (["--config", "/secrets/oidc.yml"] if c["oidc_clients"] else []),
         image=c["image"],
         imagePullPolicy="IfNotPresent",
         env=env,
@@ -240,6 +294,14 @@ def validate(c):
     for k, v in defaults().items():
         if k not in c or type(c[k]) is not type(v):
             raise ValueError("missing or invalid type: " + k)
+    if c["ca_mode"] not in ("system", "manual", "fetch"):
+        raise ValueError("ca_mode must be system, manual or fetch")
+    if c["ca_mode"] != "system" and not c["ca_file"]:
+        raise ValueError("ca_file required")
+    if c["smtp_ca_mode"] not in ("system", "manual", "fetch"):
+        raise ValueError("smtp_ca_mode must be system, manual or fetch")
+    if c["smtp_ca_mode"] != "system" and not c["smtp_ca_file"]:
+        raise ValueError("smtp_ca_file required")
     ns = c["namespace"]
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,61}[a-z0-9]", ns) or ns in (
         "default",
@@ -294,12 +356,74 @@ def validate(c):
         raise ValueError("SMTP password required for authenticated relay")
     if "@" not in c["smtp_sender"]:
         raise ValueError("SMTP sender required")
-    if not c["allowed_group"] or not c["protected_domain"]:
-        raise ValueError("explicit protected domain and group required")
+    if c["protected_domain"] and not c["allowed_group"]:
+        raise ValueError("forward-auth requires an explicit group")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", c["cookie_name"]):
+        raise ValueError("invalid cookie_name")
+    validate_oidc(c)
     if not re.fullmatch(r"[1-9][0-9]*(Mi|Gi)", c["storage_size"]):
         raise ValueError("invalid storage size")
     if ":latest" in c["image"] or not (":" in c["image"] or "@sha256:" in c["image"]):
         raise ValueError("pin the image version")
+
+
+def validate_oidc(c):
+    for name, policy in c["oidc_policies"].items():
+        if name in ("one_factor", "two_factor", "deny") or not re.fullmatch(
+            r"[a-zA-Z0-9_-]+", name
+        ):
+            raise ValueError("invalid OIDC policy name")
+        if not isinstance(policy, dict) or set(policy) != {"group", "policy"}:
+            raise ValueError("OIDC policy requires group and policy")
+        if (
+            not isinstance(policy["group"], str)
+            or not policy["group"]
+            or policy["policy"] not in ("one_factor", "two_factor")
+        ):
+            raise ValueError("invalid OIDC group or policy")
+    seen = set()
+    for client in c["oidc_clients"]:
+        if not isinstance(client, dict) or set(client) - {
+            "client_id",
+            "client_name",
+            "redirect_uris",
+            "authorization_policy",
+            "require_pkce",
+        }:
+            raise ValueError(
+                "unknown OIDC client field; only public authorization-code clients supported"
+            )
+        if not {"client_id", "redirect_uris", "authorization_policy"} <= set(client):
+            raise ValueError("OIDC client requires id, redirect URIs and authorization policy")
+        cid = client["client_id"]
+        if not isinstance(cid, str) or not re.fullmatch(r"[a-zA-Z0-9._-]+", cid) or cid in seen:
+            raise ValueError("invalid or duplicate OIDC client id")
+        seen.add(cid)
+        if (
+            not isinstance(client["authorization_policy"], str)
+            or client["authorization_policy"] not in c["oidc_policies"]
+        ):
+            raise ValueError("OIDC client must reference a group-restricted policy")
+        if type(client.get("require_pkce", True)) is not bool:
+            raise ValueError("require_pkce must be boolean")
+        uris = client["redirect_uris"]
+        if not isinstance(uris, list) or not uris:
+            raise ValueError("OIDC redirect URIs required")
+        for uri in uris:
+            if not isinstance(uri, str):
+                raise ValueError("OIDC redirect URI must be a string")
+            u = urlparse(uri)
+            if (
+                u.scheme != "https"
+                or not u.hostname
+                or u.username
+                or u.password
+                or u.fragment
+                or "*" in uri
+            ):
+                raise ValueError(
+                    "OIDC redirect URI must be exact HTTPS without fragment or credentials"
+                )
 
 
 if __name__ == "__main__":

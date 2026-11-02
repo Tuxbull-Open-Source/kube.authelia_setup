@@ -1,72 +1,93 @@
 # kube.authelia_setup
 
-Standalone Authelia on an **existing k3s cluster**, in its own namespace, with a `local-path` filesystem PVC and SQLite. No dependency on Hermes. No changes to `kube.hermes_setup`.
+Set up **native single sign-on for web applications** with Authelia on Kubernetes/k3s. Applications supporting OpenID Connect redirect users to a central login portal, authenticate against your LDAP directory, and receive an authorization code at their registered callback. LDAP groups control which clients users may access; two-factor authentication is the recommended default.
 
-The operator workflow follows `kube.hermes_setup`: **configure → install → maintain → doctor**. The implementation is deliberately smaller: Bash entrypoints and a dependency-free Python renderer/controller; no Helm chart dependency. See [provenance](NOTICE.md).
+For applications without OIDC, optional reverse-proxy forward authentication protects an explicit hostname/group. Gateway authentication alone does not replace application-local login.
 
-## Boundaries and defaults
-
-| Component | This repository owns |
-|---|---|
-| Namespace | `authelia` by default; rejects system namespaces and unmanaged existing resources |
-| Authelia | `authelia/authelia:4.39.28`, one non-root replica, `Recreate`, ClusterIP port 9091 |
-| Storage | `authelia-data`, 1Gi, RWO, `rancher.io/local-path`; SQLite at `/data/db.sqlite3` |
-| Secrets | LDAP/SMTP passwords, generated session and storage keys; mounted files, never printed |
-| Sessions | 2h inactivity, 12h absolute, remember-me disabled; single-process memory sessions |
-| Authentication | External LDAP live bind with LDAPS/StartTLS and CA verification |
-| Authorization | Default deny; one explicit protected domain + LDAP group; **two_factor** by default |
-| Notifications | External SMTP, TLS required, CA verification; no filesystem notifier |
-| Backup/recovery | Operator-owned through Velero; no installer feature |
-
-**Not installed or managed:** k3s, ingress controllers, public DNS, TLS certificates/keys/issuers, cert-manager, ACME, LDAP, SMTP, Redis, OIDC clients or Hermes. No system packages, system services, cron jobs or reboot are performed by product scripts. Images are downloaded by Kubernetes on first use. Only the isolated [QA harness](tests/lab/README.md) provisions its own test TLS, LDAP and SMTP fixtures.
-
-**Not HA:** local-path volumes are tied to a node. Node loss can lose all data. PVC capacity is not a disk quota; expansion is not supported by the standard local-path class. Protect and recover state through your operator-owned Velero procedure. Sessions are lost on pod restart; users must authenticate again.
-
-## Prerequisites
-
-- Linux operator host: Bash, Python **3.10+**, `kubectl`.
-- Existing k3s, a Ready node, healthy DNS and `local-path` provisioner; writable node disk. Application request: 100m CPU / 128Mi RAM; limit: 1 CPU / 512Mi. Allow additional headroom for k3s .
-- Kubeconfig with permission to create the dedicated namespace and manage its Deployments, Pods/exec, ConfigMaps, Secrets, Services and PVCs; read StorageClasses. Runtime pods receive **no Kubernetes API token**.
-- Working external LDAP service account, user/group/mail attributes, and SMTP relay. The LDAP account should be read-only; self-service LDAP password reset is disabled.
-- Operator-owned HTTPS reverse proxy for `https://sso.example.com`, forwarding to `authelia.authelia.svc.cluster.local:9091` over a trusted network. Preserve Host and set forwarded scheme to HTTPS; strip untrusted forwarded headers. **Do not expose port 9091 publicly.**
-
-## Configure and install
+## Configure → install → maintain → doctor
 
 ```bash
 git clone https://github.com/Tuxbull-Open-Source/kube.authelia_setup.git
 cd kube.authelia_setup
 ./configure.sh --no-install
 ./install.sh --render-only
-# Inspect current_config/artifacts/resources.json (no password values).
+# Inspect current_config/artifacts/resources.json (no passwords or signing keys).
 ./install.sh
 ./doctor.sh
 ./maintain.sh status
 ```
 
-`configure.sh` prompts for all fields, hides password input, saves `current_config/config.json` with mode 0600, then installs unless `--no-install` is supplied. Blank answers preserve existing values; edit the private JSON directly to explicitly clear an optional value. CA input accepts an operator-owned PEM CA bundle file; it does **not** create certificates or manage public TLS.
+The interactive configurator saves private JSON (0600), then installs unless `--no-install` is used. Passwords are hidden. Blank answers preserve existing settings; `-` disables the optional forward-auth hostname. OIDC clients/policies are loaded from JSON files when prompted: start with [clients](examples/oidc-clients.json) and [policies](examples/oidc-policies.json), changing IDs and exact callback URLs for your applications. No application client secret is needed: this version supports **public authorization-code clients**, not confidential clients.
 
-For automation, copy `examples/config.json` to a private path, set all actual values without putting them in shell arguments, `chmod 600` the file, and use:
+The [complete example](examples/config.json) contains sanitized FreeIPA settings: `idm01.sun.example.com`, `dc=example,dc=com`, bind DN `uid=authelia-bind,cn=users,cn=compat,dc=example,dc=com`, disabled-account filtering, and `uid`/`cn`/`mail` attributes. SMTP uses `submission://mail01.sun.example.com:587`, with example username/sender `send@example.com`. These are editable examples, not discovered settings or working credentials. AD and other directories need their own implementation, filters, DNs and attributes; the FreeIPA `nsAccountLock` filter is not portable to directories without that schema.
+
+For automation, copy the example to a private path, set actual values, and run:
 
 ```bash
+chmod 600 /secure/authelia.json
 ./configure.sh --from-answers /secure/authelia.json --no-install
 ./install.sh --config /secure/authelia.json
 ./doctor.sh --config /secure/authelia.json
 ```
 
-Every script accepts `--config`; precedence is explicit `--config`, then `CONFIG_FILE`, then repository `current_config/config.json`. JSON is parsed as data, **never sourced as shell code**. Unknown fields/options fail. No `.env` file is sourced.
+Every script accepts `--config`; precedence is explicit `--config`, then `CONFIG_FILE`, then `current_config/config.json`. JSON is data, never sourced as shell code. Unknown fields/options fail. Existing configs acquire defaults for newly introduced fields; existing values, inline CA bundles, and forward-auth rules are preserved.
 
-The [example config](examples/config.json) is the complete schema. Key groups:
-- `url`, `cookie_domain`: HTTPS portal origin and cookie parent domain, e.g. `https://sso.example.com` and `example.com`.
-- `session_idle`, `session_max`: positive integer plus `s`, `m` or `h`; idle cannot exceed maximum.
-- `ldap_*`: address, StartTLS boolean, implementation (`custom`, `freeipa`, etc.), base/bind DNs, users/groups filters, username/display/mail attribute names and bind password. Defaults suit an RFC2307-style directory; adapt filters to exclude disabled accounts for your directory.
-- `smtp_*`: address (`submission://smtp.example.com:587` or `submissions://smtp.example.com:465`), sender, optional authentication username/password. Empty username supports an IP-authorized TLS relay.
-- `ca_pem`: optional CA PEM string augmenting system trust for LDAP/SMTP. No skip-verification knob exists.
-- `protected_domain`, `allowed_group`, `policy`: exact protected hostname in the cookie domain and LDAP group. `one_factor` is an explicit opt-down; it is not MFA. Unlisted domains/groups are denied.
-- `namespace`, `image`, `storage_size`: dedicated namespace, pinned image tag/digest, initial PVC size. Do not edit namespace or PVC size as an in-place migration.
+## Native OIDC
 
-A repeated install preserves keys and PVC identity; config/secret changes update pod-template hashes and trigger rollout, while an unchanged install does not force a restart. A missing encryption Secret beside an existing PVC **fails closed** rather than generating unusable replacement keys. Server-side dry-run precedes applying application resources. Namespace creation can occur during preflight; application updates are not transactional. Reapply the previous config after configuration failure; data recovery belongs to the operator.
+Configure each application with:
 
-## Operate
+- Issuer: your exact HTTPS portal origin, e.g. `https://sso.app.example.com`.
+- Discovery: `https://sso.app.example.com/.well-known/openid-configuration`.
+- Client ID: its configured `oidc_clients[].client_id`.
+- Client authentication: `none`; authorization-code flow with **PKCE S256**.
+- Callback: the exact registered HTTPS URI; wildcards, fragments and embedded credentials are rejected.
+- Scopes: `openid profile email groups`; use the userinfo endpoint for identity/group claims.
+
+`oidc_policies` maps arbitrary names to an explicit LDAP `group` and `policy` (`two_factor`, or explicitly `one_factor`). The renderer creates a default-deny OIDC policy with a group-restricted rule. Each client must reference one of these policies. These are independent of forward-auth access-control rules. Leave `protected_domain` empty for OIDC-only operation; the gateway then denies all requests.
+
+Omitting `require_pkce` means **true**, with S256 enforced per client. Only for an application proven not to support PKCE, explicitly set `require_pkce: false` on that client. This disables its challenge requirement and is a security downgrade; it does not enable plain PKCE or weaken other clients. Prefer fixing the application's PKCE support. `one_factor` is likewise an explicit MFA opt-down.
+
+Session/storage keys and OIDC HMAC/RSA signing keys are generated once into a Kubernetes Secret and preserved on reruns. Signing keys are mounted in a separate Secret-backed config, never placed in rendered artifacts or ConfigMaps. There is no automatic key rotation. Preserve the Secret with its matching PVC.
+
+`cookie_domain` defaults to `app.example.com`, with 2h idle / 12h absolute lifetime and remember-me disabled. Use a distinct `cookie_name` for independent instances sharing a domain. The portal must be inside that cookie domain. OIDC callbacks can belong to other domains; application sessions have their own expiry and logout behavior.
+
+## LDAP and SMTP CA trust
+
+**This manages client trust, not public HTTPS certificates.** The operator still supplies public HTTPS termination. TLS verification is never disabled in Authelia.
+
+Configure LDAP and SMTP independently:
+
+| Mode | Behavior |
+|---|---|
+| `system` | Use the container's public CA trust. Appropriate for publicly trusted endpoints; no private CA file required. Legacy `ca_pem`, if populated, remains additive. |
+| `manual` | Supply a verified PEM CA bundle at the exact path printed by configure. Saving a config with a missing file is allowed; install stops **before any Kubernetes calls or changes** until the file exists and validates. |
+| `fetch` | Retrieve the chain presented by the configured LDAP/mail TLS endpoint, then require a CA certificate SHA256 fingerprint obtained independently from your administrator before accepting it. Existing files are reused and checked, never overwritten or silently refreshed. |
+
+LDAP fields: `ca_mode`, `ca_file`, `ca_fingerprint`. SMTP fields: `smtp_ca_mode`, `smtp_ca_file`, `smtp_ca_fingerprint`. Relative file paths resolve beside the config file, by default **`current_config/ldap-ca.pem`** and **`current_config/smtp-ca.pem`**. Configure prints absolute paths. `--from-answers` preserves source-relative paths by resolving them before copying the config.
+
+Fetch uses the configured hostname/port with SNI: `ldaps://` for implicit TLS, `ldap://` with `ldap_starttls: true` for LDAP StartTLS, `submissions://` for SMTP implicit TLS, and `submission://` (or `smtp://`) for SMTP STARTTLS. There is no plaintext fallback and no HTTP CA download/FreeIPA-specific distribution URL. A chain fetched from an untrusted connection is **discovery only**, not proof of authenticity. Interactive configure displays candidate CA fingerprints and requires you to enter the independently obtained SHA256 value. Noninteractive fetch requires that value in the respective `*_fingerprint` field. A mismatch fails without saving the fetched CA.
+
+Servers often omit their root CA, particularly AD servers. If the returned chain contains no valid CA, fetch fails with manual-mode guidance; it never substitutes an ordinary leaf certificate. Get the CA bundle through your directory/mail administrator's trusted channel. A SHA256 fingerprint is over the certificate's DER encoding (`openssl x509 -in trusted-ca.pem -noout -fingerprint -sha256`), not over the PEM file bytes.
+
+Bundles must contain only parseable, nonexpired PEM certificates with `CA:TRUE`; private keys and leaf certificates are rejected. Fetch has a bounded subprocess timeout and a 1 MiB accepted-chain limit. Authelia verifies the endpoint hostname and chain at startup. Its single certificates directory means **the union of approved LDAP and SMTP CAs is trusted for both services**; separate input files are not isolated trust stores.
+
+## Prerequisites and ownership
+
+- Linux operator host: Bash, Python **3.10+**, `kubectl`, **OpenSSL** (CA inspection/fetch and RSA generation). Scripts install no packages.
+- Existing k3s with a Ready node, healthy DNS and `rancher.io/local-path` storage. One non-root Authelia replica (`authelia/authelia:4.39.28`), Recreate strategy, 100m CPU / 128Mi memory request, 1 CPU / 512Mi limit.
+- A dedicated namespace and kubeconfig permissions for Namespace, Deployment, Pod read/logs/exec, ConfigMap, Secret, Service and PVC operations, and StorageClass reads. Runtime pods have no Kubernetes API token. Existing unmanaged resources are refused.
+- External LDAP service account, real user/group/mail attributes and a working TLS SMTP relay. LDAP password reset is disabled; use a read-only service account.
+- Operator-owned public DNS and HTTPS proxy for the portal, forwarding to `authelia.authelia.svc.cluster.local:9091` over a trusted network. Preserve Host/HTTPS forwarding and strip untrusted identity/forwarding headers. **Never expose 9091 directly to the Internet.**
+
+Not installed or managed: k3s, ingress controllers, DNS, public TLS certificates/issuers, cert-manager, ACME, LDAP, SMTP, Redis, applications or Velero. No system services, cron jobs or reboot are performed. Kubernetes downloads the pinned image on first use. QA-only certificates and services live in the isolated [lab harness](tests/lab/README.md).
+
+SQLite and encrypted factor data live on the 1Gi `authelia-data` PVC. **Not HA:** local-path is node-local; node loss can lose data. Its standard class does not support expansion. Sessions are in memory and are lost on pod restart. Backup/recovery is operator-owned through Velero; the product has no backup/restore commands and does not install/configure Velero.
+
+## Operation and failure handling
+
+Install prints flushed stages (trust, ownership/storage, dry-run, apply, rollout) and readiness progress. Kubernetes requests have a 20s request timeout and commands a 45s subprocess timeout; rollout checks are bounded to approximately five minutes plus any in-flight check. CrashLoop/image/config failures stop early. Classified hints cover CA/hostname, LDAP bind, SMTP, RBAC and connectivity failures without dumping potentially credential-bearing stderr/logs. Ctrl-C exits cleanly (130); a partial apply is not rolled back.
+
+Reruns preserve keys and PVC identity; unchanged configuration does not restart the pod. Missing encryption Secret beside a PVC fails closed. Server-side dry-run precedes application writes; namespace creation can occur before that validation. See [operations](docs/operations.md), [security](docs/security.md), [OIDC integration](docs/oidc.md), [QA evidence](docs/qa.md), and [attribution](NOTICE.md).
 
 ```bash
 ./maintain.sh status
@@ -74,11 +95,7 @@ A repeated install preserves keys and PVC identity; config/secret changes update
 ./doctor.sh
 ```
 
-There is no automatic upgrade, key rotation, uninstall, backup/restore or PVC deletion command. **Backup/recovery is operator-owned through Velero.** This repository does not install, configure or validate Velero. Preserve the PVC and its matching encryption Secret together under that process.
-
-For upgrades, review upstream release notes, follow your operator-owned protection procedure, edit the pinned `image`, run install/doctor and repeat browser acceptance. Changing an image tag does not reverse a SQLite schema migration.
-
-See [operations](docs/operations.md), [security and TLS boundary](docs/security.md), [future Hermes integration](docs/hermes-integration.md), and [actual QA evidence](docs/qa.md).
+No automatic upgrade, key rotation, uninstall or PVC deletion. Review upstream migrations before changing the pinned image; changing it back does not undo a database migration.
 
 ## Tests
 
@@ -86,9 +103,8 @@ See [operations](docs/operations.md), [security and TLS boundary](docs/security.
 bash -n configure.sh install.sh maintain.sh doctor.sh
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q scripts tests
-# Optional development dependency: ruff
 ruff check scripts tests
 ruff format --check scripts tests
 ```
 
-Live and Chromium acceptance are separate mandatory release gates, not simulated by the unit suite. Public CI is not configured in this initial repository. See the reproducible [disposable lab procedure](tests/lab/README.md).
+Live/browser acceptance is separate from the local suite. Public CI is not configured. The disposable lab exercises real LDAP/SMTP, native OIDC callbacks, token validation, PKCE, group denial, MFA and reruns; it is not a claim of production FreeIPA/AD or application-specific cutover validation.

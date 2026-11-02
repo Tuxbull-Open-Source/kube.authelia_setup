@@ -116,7 +116,10 @@ class SetupTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
-            self.assertEqual(json.loads(target.read_text()), config)
+            saved = json.loads(target.read_text())
+            for field in ("ca_file", "smtp_ca_file"):
+                config[field] = str(root / config[field])
+            self.assertEqual(saved, config)
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
             subprocess.run(
                 [str(ROOT / "install.sh"), "--config", str(target), "--render-only"],

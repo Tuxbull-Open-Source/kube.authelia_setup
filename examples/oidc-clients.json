@@ -1,0 +1,4 @@
+[
+  {"client_id": "dashboard", "client_name": "Dashboard", "redirect_uris": ["https://dashboard.app.example.com/auth/callback"], "authorization_policy": "staff", "require_pkce": true},
+  {"client_id": "webui", "client_name": "Web UI", "redirect_uris": ["https://webui.app.example.com/api/auth/oidc/callback"], "authorization_policy": "staff", "require_pkce": true}
+]
