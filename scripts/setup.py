@@ -16,6 +16,8 @@ def defaults():
     return dict(
         namespace="authelia",
         url="https://sso.app.example.com",
+        ingress_enabled=True,
+        ingress_class="traefik",
         cookie_domain="app.example.com",
         cookie_name="authelia_session",
         oidc_clients=[],
@@ -53,7 +55,11 @@ def defaults():
 
 
 def obj(kind, name, c, spec=None, **extra):
-    api = {"Deployment": "apps/v1", "NetworkPolicy": "networking.k8s.io/v1"}.get(kind, "v1")
+    api = {
+        "Deployment": "apps/v1",
+        "NetworkPolicy": "networking.k8s.io/v1",
+        "Ingress": "networking.k8s.io/v1",
+    }.get(kind, "v1")
     d = dict(
         apiVersion=api,
         kind=kind,
@@ -278,6 +284,33 @@ def render(c):
             ),
         ),
     ]
+    if c["ingress_enabled"]:
+        docs.append(
+            obj(
+                "Ingress",
+                "authelia",
+                c,
+                dict(
+                    ingressClassName=c["ingress_class"],
+                    rules=[
+                        dict(
+                            host=urlparse(c["url"]).hostname,
+                            http=dict(
+                                paths=[
+                                    dict(
+                                        path="/",
+                                        pathType="Prefix",
+                                        backend=dict(
+                                            service=dict(name="authelia", port=dict(number=9091))
+                                        ),
+                                    )
+                                ]
+                            ),
+                        )
+                    ],
+                ),
+            )
+        )
     return docs
 
 
@@ -311,6 +344,14 @@ def validate(c):
     ):
         raise ValueError("use a dedicated namespace")
     u = urlparse(c["url"])
+    for field, value in (
+        ("ingress_class", c["ingress_class"]),
+        ("portal hostname", u.hostname or ""),
+    ):
+        if len(value) > 253 or not all(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in value.split(".")
+        ):
+            raise ValueError(field + " must be a DNS subdomain")
     if (
         u.scheme != "https"
         or not u.hostname

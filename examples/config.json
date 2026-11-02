@@ -1,6 +1,8 @@
 {
   "namespace": "authelia",
   "url": "https://sso.app.example.com",
+  "ingress_enabled": true,
+  "ingress_class": "traefik",
   "cookie_domain": "app.example.com",
   "cookie_name": "authelia_sso_session",
   "session_idle": "2h",

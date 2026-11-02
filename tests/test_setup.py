@@ -20,7 +20,7 @@ class SetupTests(unittest.TestCase):
         docs = m.render(c)
         kinds = [d["kind"] for d in docs]
         self.assertIn("PersistentVolumeClaim", kinds)
-        self.assertNotIn("Ingress", kinds)
+        self.assertIn("Ingress", kinds)
         self.assertNotIn("Certificate", kinds)
         deploy = next(d for d in docs if d["kind"] == "Deployment")
         self.assertFalse(deploy["spec"]["template"]["spec"].get("enableServiceLinks", True))

@@ -13,6 +13,7 @@ p = pathlib.Path("/root/qa")
 host = sys.argv[1]
 c = defaults()
 c.update(
+    ingress_enabled=False,  # The browser harness supplies its own QA-only HTTPS route.
     url="https://" + host,
     cookie_domain=host.removeprefix("sso."),
     protected_domain="app." + host.removeprefix("sso."),

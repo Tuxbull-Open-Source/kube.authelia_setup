@@ -36,7 +36,15 @@ python3 tests/lab/deploy.py "$HOST"
 ./doctor.sh
 ```
 
-Fixtures require the standard single-node k3s pod CIDR/bridge. Adapt intentionally if different. `deploy.py` uses TLS only in the QA harness: it creates a self-signed secret/ingress, sets default two-factor policy and shorter session timeouts (30s idle / 2m absolute) for bounded acceptance. Product scripts still create no ingress/TLS resources.
+Fixtures require the standard single-node k3s pod CIDR/bridge. Adapt intentionally if different. `deploy.py` uses TLS only in the QA harness: it creates a self-signed secret/ingress, sets default two-factor policy and shorter session timeouts (30s idle / 2m absolute) for bounded acceptance. This browser harness disables product Ingress to use its separate QA HTTPS route. Product scripts own application Ingress routing but never provision TLS.
+
+For installer-owned Ingress acceptance on a **fresh namespace**, run `fixtures.py sso.app.example.com` and the SMTP fixture above, then **instead of `deploy.py`** run:
+
+```bash
+python3 tests/lab/ingress.py --yes-disposable
+```
+
+This tests legacy config migration without exposure, explicit enable, actual HTTP Host routing through Traefik to Authelia health, rerun Secret/PVC/pod-template stability, owned-route deletion on disable, preservation of unrelated/same-name unmanaged routes, and ownership-conflict refusal. It uses loopback HTTP for routing-only acceptance; it does not claim external HTTPS acceptance or provision TLS. Do not use these fixture scripts on a user cluster.
 
 Install browser tooling **in the lab only** and run enrollment once on the fresh database:
 

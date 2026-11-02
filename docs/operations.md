@@ -9,7 +9,15 @@
 
 Use one trusted admin host and one config path per installation. Scripts use a nonblocking local lock on `<config>.lock`; **this is not a distributed lock**. Do not operate concurrently from multiple hosts or race a GitOps controller. Server-side apply uses field manager `kube-authelia` and never forces ownership conflicts.
 
-Owned names are the configured namespace, `deployment/authelia`, `service/authelia`, `pvc/authelia-data`, `configmap/authelia-config`, optional `configmap/authelia-ca`, and `secret/authelia-secrets`. Unmanaged existing resources are rejected. Do not relabel another application's resources to bypass that protection.
+Owned names are the configured namespace, `deployment/authelia`, `service/authelia`, `pvc/authelia-data`, `configmap/authelia-config`, optional `configmap/authelia-ca`, `secret/authelia-secrets`, and enabled `ingress/authelia`. Unmanaged existing resources are rejected before writes for enabled resources. Do not relabel another application's resources to bypass that protection.
+
+### Ingress upgrades and disabling
+
+New configs enable `ingress_enabled` with class `traefik`. Saved configs missing that field load as false, including noninteractive answer files; upgrade alone never enables exposure. Configure offers an explicit true/false prompt (blank preserves). After preparing operator-owned HTTPS and an existing controller, choose true and `ingress_class`, render/review, then install. The host is derived from `url`; no independent host override is needed. No TLS spec, certificates, issuers or controller are provisioned.
+
+With false, install deliberately deletes only `ingress/authelia` in the configured namespace **if its `app.kubernetes.io/managed-by` label equals `kube.authelia_setup`**. It re-reads ownership immediately before deletion and sends UID and resourceVersion preconditions; concurrent replacement/modification fails rather than deleting a different object. No broad label prune is used. Other names/namespaces and an unlabelled same-name external route are untouched. Render-only merely omits the Ingress; run install to reconcile removal. Repeated disabled installs are safe. Service, keys and PVC remain available for externally managed routing.
+
+Prepare an alternative route before disabling if continuity is required. Do not run two routes for the same hostname simultaneously. Enabling with an external same-name route fails before resource writes: deliberately migrate/rename that operator-owned route yourself, or keep routing disabled. Changing `url` or class updates the owned route; validate DNS, controller selection, HTTPS termination and a real login independently. Doctor checks internal health, not end-to-end external HTTPS. Namespace changes are not a migration and do not clean up the old namespace's route.
 
 The installer does not install a scheduler, automatic upgrade job, backup tool, TLS component or Velero. **Backup and recovery are entirely operator-owned through Velero; this product has no backup/restore commands.** The operator is responsible for consistent PVC contents, the matching encryption Secret, private configuration, retention and recovery verification. No Velero installation, configuration or validation is performed here.
 

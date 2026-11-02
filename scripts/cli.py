@@ -234,7 +234,9 @@ def load(path):
     p = Path(path)
     if p.is_symlink() or not p.is_file() or p.stat().st_mode & 0o077:
         raise ValueError("configuration must be a regular private file (chmod 600)")
-    c = defaults() | json.loads(p.read_text())
+    saved = json.loads(p.read_text())
+    # Missing routing consent in older configs must never expose a deployment.
+    c = defaults() | {"ingress_enabled": False} | saved
     validate(c)
     for field in ("ca_file", "smtp_ca_file"):
         if not Path(c[field]).is_absolute():
@@ -251,7 +253,7 @@ def ownership(c):
         ("configmap", "authelia-ca"),
         ("deployment", "authelia"),
         ("service", "authelia"),
-    ]:
+    ] + ([("ingress", "authelia")] if c["ingress_enabled"] else []):
         d = get(c, kind, name)
         if (
             d
@@ -259,6 +261,37 @@ def ownership(c):
             != LABEL["app.kubernetes.io/managed-by"]
         ):
             raise ValueError("refusing unmanaged resource: " + kind + "/" + name)
+
+
+def reconcile_ingress(c):
+    """Disable only our exact route; preconditions protect against replacement races."""
+    if c["ingress_enabled"]:
+        return
+    route = get(c, "ingress", "authelia")
+    if (
+        not route
+        or route["metadata"].get("labels", {}).get("app.kubernetes.io/managed-by")
+        != LABEL["app.kubernetes.io/managed-by"]
+    ):
+        return
+    metadata = route["metadata"]
+    options = dict(
+        apiVersion="v1",
+        kind="DeleteOptions",
+        preconditions={
+            "uid": metadata["uid"],
+            "resourceVersion": metadata["resourceVersion"],
+        },
+    )
+    print("Removing installer-owned ingress/authelia (routing disabled)", flush=True)
+    kube(
+        "delete",
+        "--raw",
+        "/apis/networking.k8s.io/v1/namespaces/" + c["namespace"] + "/ingresses/authelia",
+        "-f",
+        "-",
+        data=json.dumps(options).encode(),
+    )
 
 
 def secret_doc(c, old=None, data_exists=False):
@@ -395,7 +428,8 @@ def install(c):
         get(c, "secret", "authelia-secrets"),
         data_exists=get(c, "pvc", "authelia-data") is not None,
     )
-    docs[-1]["spec"]["template"]["metadata"]["annotations"]["secrets-sha256"] = hashlib.sha256(
+    deployment = next(d for d in docs if d["kind"] == "Deployment")
+    deployment["spec"]["template"]["metadata"]["annotations"]["secrets-sha256"] = hashlib.sha256(
         json.dumps(s["data"], sort_keys=True).encode()
     ).hexdigest()
     print("[3/5] Server-side validation of application resources", flush=True)
@@ -404,6 +438,7 @@ def install(c):
     print("[4/5] Applying resources (preserving existing keys and PVC)", flush=True)
     for d in [s, *docs[1:]]:
         apply(d)
+    reconcile_ingress(c)
     print("[5/5] Checking rollout", flush=True)
     rollout(c)
     print("PASS install and rollout")
@@ -451,6 +486,26 @@ def doctor(c):
     )
 
 
+def ca_details(pem):
+    """Display-only identities; never evidence that a candidate is authentic."""
+    try:
+        details = run(
+            ["openssl", "x509", "-noout", "-subject", "-issuer", "-enddate", "-nameopt", "RFC2253"],
+            pem.encode(),
+        ).decode("ascii", errors="backslashreplace")
+    except RuntimeError:
+        raise ValueError("Unable to inspect CA certificate identity; no CA saved.") from None
+    labels = {"subject": "Subject", "issuer": "Issuer", "notAfter": "Expires"}
+    lines = []
+    for line in details.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in labels:
+            # Keep untrusted certificate names from emitting terminal control characters.
+            value = "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in value)
+            lines.append("  " + labels[key] + ": " + value)
+    return "\n".join(lines)
+
+
 def configure_trust(c, path):
     print(
         "Trust is for LDAP/SMTP, not public HTTPS certificate provisioning. Endpoint chains may omit the root CA (common with AD).",
@@ -480,20 +535,52 @@ def configure_trust(c, path):
         if not ca_path.is_absolute():
             ca_path = path.absolute().parent / ca_path
         c[field] = str(ca_path)
-        print(
-            "Place the independently verified "
-            + label
-            + " PEM CA bundle at "
-            + str(ca_path)
-            + ". Install stops before cluster changes if missing/invalid. Existing files are never overwritten.",
-            flush=True,
-        )
+        if mode == "manual":
+            print(
+                "Place the independently verified "
+                + label
+                + " PEM CA bundle at "
+                + str(ca_path)
+                + ". Install stops before cluster changes if missing/invalid. Existing files are never overwritten.",
+                flush=True,
+            )
         if mode == "fetch":
-            chain = ca_path.read_text() if ca_path.is_file() else download_ca(endpoint, starttls)
-            for fingerprint, _ in ca_candidates(chain):
+            print(label + " CA save destination: " + str(ca_path), flush=True)
+            if ca_path.is_file():
                 print(
                     label
-                    + " presented CA SHA256 (UNTRUSTED until independently verified): "
+                    + ": Reading existing local CA file (no endpoint connection; never overwritten).",
+                    flush=True,
+                )
+                chain = ca_path.read_text()
+                source = "existing local CA file"
+            else:
+                print(
+                    label
+                    + ": Connecting to configured TLS endpoint to retrieve its certificate chain...",
+                    flush=True,
+                )
+                chain = download_ca(endpoint, starttls)
+                print(
+                    label + ": Retrieved certificate chain (discovery only, not trusted).",
+                    flush=True,
+                )
+                source = "retrieved endpoint chain"
+            print(
+                "CA candidates from "
+                + source
+                + ". Names and fingerprints shown here are not proof of authenticity. "
+                "Compare with a SHA256 fingerprint from your administrator through an independent trusted channel; do not blindly copy a value below.",
+                flush=True,
+            )
+            for number, (fingerprint, candidate) in enumerate(ca_candidates(chain), 1):
+                print(
+                    label
+                    + " Candidate "
+                    + str(number)
+                    + " (UNTRUSTED until independently verified)\n"
+                    + ca_details(candidate)
+                    + "\n  SHA256: "
                     + fingerprint,
                     flush=True,
                 )
@@ -507,6 +594,15 @@ def configure_trust(c, path):
                 fd = os.open(ca_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, "w") as f:
                     f.write(pem)
+                print(label + ": Saved fingerprint-matched CA to " + str(ca_path), flush=True)
+            else:
+                print(
+                    label
+                    + ": Reused fingerprint-matched CA from "
+                    + str(ca_path)
+                    + " (file unchanged).",
+                    flush=True,
+                )
 
 
 def configure(args):
@@ -522,6 +618,14 @@ def configure(args):
             flush=True,
         )
         for k in defaults():
+            if k == "ingress_enabled":
+                print(
+                    "Ingress routing: new configs default true; legacy configs without this field remain false. "
+                    "Requires an existing ingress controller and operator-provided HTTPS termination. "
+                    "false removes only installer-owned ingress/authelia in this namespace on install; unrelated routes remain. "
+                    "No certificates, TLS spec or controller are provisioned. Enter true/false; blank keeps.",
+                    flush=True,
+                )
             if k in (
                 "ca_pem",
                 "ca_mode",
@@ -571,7 +675,7 @@ def main():
     mode = sys.argv[1]
     p = argparse.ArgumentParser(
         prog=mode + ".sh",
-        description="Standalone Authelia; TLS and LDAP/SMTP services remain operator-owned.",
+        description="Standalone Authelia with configurable Ingress routing (new configs enabled; legacy configs opt in). TLS, ingress controller and LDAP/SMTP services remain operator-owned.",
     )
     p.add_argument(
         "--config",

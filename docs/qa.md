@@ -1,5 +1,36 @@
 # Validation evidence
 
+## Installer-owned Ingress follow-up — 2026-11-02
+
+A new disposable Hetzner fsn1/cx23 Ubuntu **24.04.4 LTS** VM ran **k3s v1.34.1+k3s1**, standard Traefik/local-path, and Authelia **4.39.28** with isolated real LDAPS and SMTP STARTTLS fixtures. The final application container was Ready with restartCount=0 and image digest `sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54`.
+
+**Local and VM unit suite:** 30 tests passed, including six Ingress tests covering enabled/disabled render, class/host/namespace/backend and exact no-TLS manifest, validation, legacy configuration, wizard opt-in guidance, pre-mutation ownership refusal, Deployment secret-hash targeting, and scoped deletion preconditions. Bash syntax, Python compileall, Ruff lint/format and diff whitespace checks passed locally.
+
+**Actual disposable k3s acceptance** (`tests/lab/ingress.py --yes-disposable`):
+
+- Installed a legacy config without the new routing fields: no Ingress was created.
+- Explicitly enabled routing on that running installation: installer-owned `ingress/authelia` used Traefik, the configured portal Host and Service `authelia:9091`; no TLS spec. A real HTTP request with the portal Host through Traefik returned Authelia `/api/health` HTTP 200 and status OK.
+- Enabling and repeating install preserved existing Secret data/UID, PVC UID and pod template; the repeated enabled install retained Ingress UID.
+- Disabling removed the owned route through Kubernetes UID/resourceVersion-preconditioned deletion; the old Host then returned HTTP 404. Application state and an unrelated operator Ingress remained unchanged.
+- Disabled installation preserved an unmanaged same-name Ingress. Enabling refused that ownership conflict and left the route and application state unchanged. Removing the disposable fixture conflict and re-enabling restored HTTP health.
+- `tests/live.py` passed repeated-install stability, missing-encryption-Secret fail-closed behavior with an existing PVC, invalid-config no-mutation checks and doctor. Maintenance restart and final doctor passed.
+
+The tested VM source hashes matched the local source exactly:
+
+```text
+d13dc1246c77dfc680f5730732c162407912898409a6f5790502880171a99627  scripts/cli.py
+b056cc41bb9f259f2be79dba73f3835543158b4afc720412c79c7642d320343c  scripts/setup.py
+ca62a1430bbd1cd7192de540e3d0923e16734aa3faa44accf6e1fd8151a18c1d  tests/lab/ingress.py
+```
+
+**Limits:** This follow-up verifies application routing via loopback HTTP with a Host header, not public HTTPS termination. Certificates, controller installation and HTTPS policy remain operator responsibilities. Browser MFA/OIDC flows were not rerun in this routing-only follow-up; their earlier evidence is retained below. Class customization is renderer-tested; live controller coverage is Traefik only. Source self-review was performed; no independent review agent or public CI was available. No user cluster, consumer repository, backup/restore or release was changed.
+
+**Cleanup verified before publication:** exact temporary server, SSH key and both primary IPs returned API 404. Run-labelled enumeration returned zero servers, SSH keys, primary IPs, volumes and firewalls. No paid resource from this run remains.
+
+The historical initial-publication statement below that the product creates no Ingress is superseded by this follow-up. TLS provisioning remains excluded.
+
+---
+
 ## Native OIDC and trust-workflow follow-up — 2026-11-02
 
 A new disposable Hetzner fsn1/cx23 Ubuntu 24.04.4 LTS x86_64 VM ran k3s v1.34.1+k3s1, Authelia 4.39.28 and Chromium 156.0.8078.4. Final pod: Ready, restartCount=0, image digest `sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54`.
