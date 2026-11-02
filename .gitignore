@@ -1,0 +1,10 @@
+current_config/
+.private/
+backups/
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+configuration_answers
+*.env
+!examples/*.env.example
