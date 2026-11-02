@@ -1,8 +1,19 @@
 # kube.authelia_setup
 
-Standalone Authelia on an **existing k3s cluster**, in its own namespace, with a `local-path` filesystem PVC and SQLite. No dependency on Hermes. No changes to `kube.hermes_setup`.
+Set up **single sign-on (SSO) for your web applications** with Authelia on Kubernetes/k3s. Authenticate users against your existing LDAP directory, require multi-factor authentication, and control access by LDAP group through your reverse proxy.
 
-The operator workflow follows `kube.hermes_setup`: **configure → install → maintain → doctor**. The implementation is deliberately smaller: Bash entrypoints and a dependency-free Python renderer/controller; no Helm chart dependency. See [provenance](NOTICE.md).
+Users sign in at a central authentication portal. Your reverse proxy checks requests with Authelia before allowing access to a protected application, so users can reuse their SSO session instead of signing in again at the gateway. Application-local login remains separate unless the application explicitly supports trusted-proxy authentication.
+
+## Target usage
+
+- Protect internal web tools and self-hosted applications using reverse-proxy **forward authentication**; see the [Traefik example](examples/forward-auth.yaml).
+- Use existing LDAP identities and groups rather than maintaining another user directory.
+- Apply two-factor authentication by default, with configurable inactivity and maximum session lifetimes.
+- Send authentication notifications through your existing SMTP relay.
+
+The current configuration protects one explicit application hostname and LDAP group. Native OpenID Connect client configuration is not included.
+
+The operator workflow is **configure → install → maintain → doctor**. The installer deploys Authelia into a dedicated namespace on an existing k3s cluster, with persistent local-path storage and SQLite. You supply the reverse proxy, public HTTPS endpoint, LDAP directory and SMTP service. Implementation provenance is recorded in [NOTICE.md](NOTICE.md).
 
 ## Boundaries and defaults
 
@@ -18,7 +29,7 @@ The operator workflow follows `kube.hermes_setup`: **configure → install → m
 | Notifications | External SMTP, TLS required, CA verification; no filesystem notifier |
 | Backup/recovery | Operator-owned through Velero; no installer feature |
 
-**Not installed or managed:** k3s, ingress controllers, public DNS, TLS certificates/keys/issuers, cert-manager, ACME, LDAP, SMTP, Redis, OIDC clients or Hermes. No system packages, system services, cron jobs or reboot are performed by product scripts. Images are downloaded by Kubernetes on first use. Only the isolated [QA harness](tests/lab/README.md) provisions its own test TLS, LDAP and SMTP fixtures.
+**Not installed or managed:** k3s, ingress controllers, public DNS, TLS certificates/keys/issuers, cert-manager, ACME, LDAP, SMTP, Redis or OIDC clients. No system packages, system services, cron jobs or reboot are performed by product scripts. Images are downloaded by Kubernetes on first use. Only the isolated [QA harness](tests/lab/README.md) provisions its own test TLS, LDAP and SMTP fixtures.
 
 **Not HA:** local-path volumes are tied to a node. Node loss can lose all data. PVC capacity is not a disk quota; expansion is not supported by the standard local-path class. Protect and recover state through your operator-owned Velero procedure. Sessions are lost on pod restart; users must authenticate again.
 
