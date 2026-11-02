@@ -30,7 +30,17 @@ chmod 600 /secure/authelia.json
 ./doctor.sh --config /secure/authelia.json
 ```
 
-Every script accepts `--config`; precedence is explicit `--config`, then `CONFIG_FILE`, then `current_config/config.json`. JSON is data, never sourced as shell code. Unknown fields/options fail. Existing configs acquire defaults for newly introduced fields; existing values, inline CA bundles, and forward-auth rules are preserved.
+Every script accepts `--config`; precedence is explicit `--config`, then `CONFIG_FILE`, then `current_config/config.json`. JSON is data, never sourced as shell code. Unknown fields/options fail. Existing values, inline CA bundles, and forward-auth rules are preserved. New fields acquire defaults **except `ingress_enabled`: a saved config without this field remains disabled**, avoiding silent exposure on upgrade.
+
+## Portal Ingress routing (TLS remains operator-owned)
+
+New interactive configs and the example enable **`ingress_enabled: true`**, with **`ingress_class: "traefik"`**. Install creates `networking.k8s.io/v1` Ingress `authelia` in the configured namespace: the host comes from the validated HTTPS `url`, path `/` with Prefix matching routes to Service `authelia:9091`. Choose the class of your existing controller; the installer does not install one.
+
+**Provide working HTTPS termination before enabling routing.** The Ingress intentionally has no `spec.tls`, certificate Secret, issuer, ACME configuration or TLS annotations. Configure certificates/HTTPS at your external proxy or controller independently, including HTTP-to-HTTPS policy and trusted forwarding headers. A plain default k3s Traefik deployment does not by itself satisfy this HTTPS prerequisite. LDAP/SMTP CA trust is unrelated to public HTTPS.
+
+For external routing, set `ingress_enabled: false`. Install omits the Ingress and removes only a previously installer-labelled `ingress/authelia` in the selected namespace; it never deletes unrelated or unlabelled routes, Services, Secrets or PVCs. `--render-only` performs no deletion. An unmanaged same-name Ingress is preserved when disabled and rejected before resource mutation when enabled; it is never adopted automatically.
+
+**Upgrading:** old configs (including `--from-answers` files) without `ingress_enabled` load as false. Run `./configure.sh --no-install`, explicitly answer `true` at the routing prompt after preparing external HTTPS, select your class, inspect `./install.sh --render-only`, then install. Blank keeps the previous choice. Alternatively retain false and your existing external route. Do not create duplicate routes for the same hostname; see [operations](docs/operations.md).
 
 ## Native OIDC
 
@@ -75,9 +85,9 @@ Bundles must contain only parseable, nonexpired PEM certificates with `CA:TRUE`;
 
 - Linux operator host: Bash, Python **3.10+**, `kubectl`, **OpenSSL** (CA inspection/fetch and RSA generation). Scripts install no packages.
 - Existing k3s with a Ready node, healthy DNS and `rancher.io/local-path` storage. One non-root Authelia replica (`authelia/authelia:4.39.28`), Recreate strategy, 100m CPU / 128Mi memory request, 1 CPU / 512Mi limit.
-- A dedicated namespace and kubeconfig permissions for Namespace, Deployment, Pod read/logs/exec, ConfigMap, Secret, Service and PVC operations, and StorageClass reads. Runtime pods have no Kubernetes API token. Existing unmanaged resources are refused.
+- A dedicated namespace and kubeconfig permissions for Namespace, Deployment, Pod read/logs/exec, ConfigMap, Secret, Service, PVC and Ingress operations (including Ingress get/delete for disabled-route reconciliation), and StorageClass reads. Runtime pods have no Kubernetes API token. Existing unmanaged resources are refused before enabled-resource writes.
 - External LDAP service account, real user/group/mail attributes and a working TLS SMTP relay. LDAP password reset is disabled; use a read-only service account.
-- Operator-owned public DNS and HTTPS proxy for the portal, forwarding to `authelia.authelia.svc.cluster.local:9091` over a trusted network. Preserve Host/HTTPS forwarding and strip untrusted identity/forwarding headers. **Never expose 9091 directly to the Internet.**
+- Operator-owned public DNS and HTTPS termination for the portal, reaching the installer-owned Ingress through your existing controller, or an external route to `authelia.authelia.svc.cluster.local:9091` when Ingress is disabled. Preserve Host/HTTPS forwarding and strip untrusted identity/forwarding headers. **Never expose 9091 directly to the Internet.**
 
 Not installed or managed: k3s, ingress controllers, DNS, public TLS certificates/issuers, cert-manager, ACME, LDAP, SMTP, Redis, applications or Velero. No system services, cron jobs or reboot are performed. Kubernetes downloads the pinned image on first use. QA-only certificates and services live in the isolated [lab harness](tests/lab/README.md).
 

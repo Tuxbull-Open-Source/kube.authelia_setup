@@ -234,7 +234,9 @@ def load(path):
     p = Path(path)
     if p.is_symlink() or not p.is_file() or p.stat().st_mode & 0o077:
         raise ValueError("configuration must be a regular private file (chmod 600)")
-    c = defaults() | json.loads(p.read_text())
+    saved = json.loads(p.read_text())
+    # Missing routing consent in older configs must never expose a deployment.
+    c = defaults() | {"ingress_enabled": False} | saved
     validate(c)
     for field in ("ca_file", "smtp_ca_file"):
         if not Path(c[field]).is_absolute():
@@ -251,7 +253,7 @@ def ownership(c):
         ("configmap", "authelia-ca"),
         ("deployment", "authelia"),
         ("service", "authelia"),
-    ]:
+    ] + ([("ingress", "authelia")] if c["ingress_enabled"] else []):
         d = get(c, kind, name)
         if (
             d
@@ -259,6 +261,37 @@ def ownership(c):
             != LABEL["app.kubernetes.io/managed-by"]
         ):
             raise ValueError("refusing unmanaged resource: " + kind + "/" + name)
+
+
+def reconcile_ingress(c):
+    """Disable only our exact route; preconditions protect against replacement races."""
+    if c["ingress_enabled"]:
+        return
+    route = get(c, "ingress", "authelia")
+    if (
+        not route
+        or route["metadata"].get("labels", {}).get("app.kubernetes.io/managed-by")
+        != LABEL["app.kubernetes.io/managed-by"]
+    ):
+        return
+    metadata = route["metadata"]
+    options = dict(
+        apiVersion="v1",
+        kind="DeleteOptions",
+        preconditions={
+            "uid": metadata["uid"],
+            "resourceVersion": metadata["resourceVersion"],
+        },
+    )
+    print("Removing installer-owned ingress/authelia (routing disabled)", flush=True)
+    kube(
+        "delete",
+        "--raw",
+        "/apis/networking.k8s.io/v1/namespaces/" + c["namespace"] + "/ingresses/authelia",
+        "-f",
+        "-",
+        data=json.dumps(options).encode(),
+    )
 
 
 def secret_doc(c, old=None, data_exists=False):
@@ -395,7 +428,8 @@ def install(c):
         get(c, "secret", "authelia-secrets"),
         data_exists=get(c, "pvc", "authelia-data") is not None,
     )
-    docs[-1]["spec"]["template"]["metadata"]["annotations"]["secrets-sha256"] = hashlib.sha256(
+    deployment = next(d for d in docs if d["kind"] == "Deployment")
+    deployment["spec"]["template"]["metadata"]["annotations"]["secrets-sha256"] = hashlib.sha256(
         json.dumps(s["data"], sort_keys=True).encode()
     ).hexdigest()
     print("[3/5] Server-side validation of application resources", flush=True)
@@ -404,6 +438,7 @@ def install(c):
     print("[4/5] Applying resources (preserving existing keys and PVC)", flush=True)
     for d in [s, *docs[1:]]:
         apply(d)
+    reconcile_ingress(c)
     print("[5/5] Checking rollout", flush=True)
     rollout(c)
     print("PASS install and rollout")
@@ -583,6 +618,14 @@ def configure(args):
             flush=True,
         )
         for k in defaults():
+            if k == "ingress_enabled":
+                print(
+                    "Ingress routing: new configs default true; legacy configs without this field remain false. "
+                    "Requires an existing ingress controller and operator-provided HTTPS termination. "
+                    "false removes only installer-owned ingress/authelia in this namespace on install; unrelated routes remain. "
+                    "No certificates, TLS spec or controller are provisioned. Enter true/false; blank keeps.",
+                    flush=True,
+                )
             if k in (
                 "ca_pem",
                 "ca_mode",
@@ -632,7 +675,7 @@ def main():
     mode = sys.argv[1]
     p = argparse.ArgumentParser(
         prog=mode + ".sh",
-        description="Standalone Authelia; TLS and LDAP/SMTP services remain operator-owned.",
+        description="Standalone Authelia with configurable Ingress routing (new configs enabled; legacy configs opt in). TLS, ingress controller and LDAP/SMTP services remain operator-owned.",
     )
     p.add_argument(
         "--config",
