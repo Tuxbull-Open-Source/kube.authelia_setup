@@ -451,6 +451,26 @@ def doctor(c):
     )
 
 
+def ca_details(pem):
+    """Display-only identities; never evidence that a candidate is authentic."""
+    try:
+        details = run(
+            ["openssl", "x509", "-noout", "-subject", "-issuer", "-enddate", "-nameopt", "RFC2253"],
+            pem.encode(),
+        ).decode("ascii", errors="backslashreplace")
+    except RuntimeError:
+        raise ValueError("Unable to inspect CA certificate identity; no CA saved.") from None
+    labels = {"subject": "Subject", "issuer": "Issuer", "notAfter": "Expires"}
+    lines = []
+    for line in details.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in labels:
+            # Keep untrusted certificate names from emitting terminal control characters.
+            value = "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in value)
+            lines.append("  " + labels[key] + ": " + value)
+    return "\n".join(lines)
+
+
 def configure_trust(c, path):
     print(
         "Trust is for LDAP/SMTP, not public HTTPS certificate provisioning. Endpoint chains may omit the root CA (common with AD).",
@@ -480,20 +500,52 @@ def configure_trust(c, path):
         if not ca_path.is_absolute():
             ca_path = path.absolute().parent / ca_path
         c[field] = str(ca_path)
-        print(
-            "Place the independently verified "
-            + label
-            + " PEM CA bundle at "
-            + str(ca_path)
-            + ". Install stops before cluster changes if missing/invalid. Existing files are never overwritten.",
-            flush=True,
-        )
+        if mode == "manual":
+            print(
+                "Place the independently verified "
+                + label
+                + " PEM CA bundle at "
+                + str(ca_path)
+                + ". Install stops before cluster changes if missing/invalid. Existing files are never overwritten.",
+                flush=True,
+            )
         if mode == "fetch":
-            chain = ca_path.read_text() if ca_path.is_file() else download_ca(endpoint, starttls)
-            for fingerprint, _ in ca_candidates(chain):
+            print(label + " CA save destination: " + str(ca_path), flush=True)
+            if ca_path.is_file():
                 print(
                     label
-                    + " presented CA SHA256 (UNTRUSTED until independently verified): "
+                    + ": Reading existing local CA file (no endpoint connection; never overwritten).",
+                    flush=True,
+                )
+                chain = ca_path.read_text()
+                source = "existing local CA file"
+            else:
+                print(
+                    label
+                    + ": Connecting to configured TLS endpoint to retrieve its certificate chain...",
+                    flush=True,
+                )
+                chain = download_ca(endpoint, starttls)
+                print(
+                    label + ": Retrieved certificate chain (discovery only, not trusted).",
+                    flush=True,
+                )
+                source = "retrieved endpoint chain"
+            print(
+                "CA candidates from "
+                + source
+                + ". Names and fingerprints shown here are not proof of authenticity. "
+                "Compare with a SHA256 fingerprint from your administrator through an independent trusted channel; do not blindly copy a value below.",
+                flush=True,
+            )
+            for number, (fingerprint, candidate) in enumerate(ca_candidates(chain), 1):
+                print(
+                    label
+                    + " Candidate "
+                    + str(number)
+                    + " (UNTRUSTED until independently verified)\n"
+                    + ca_details(candidate)
+                    + "\n  SHA256: "
                     + fingerprint,
                     flush=True,
                 )
@@ -507,6 +559,15 @@ def configure_trust(c, path):
                 fd = os.open(ca_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, "w") as f:
                     f.write(pem)
+                print(label + ": Saved fingerprint-matched CA to " + str(ca_path), flush=True)
+            else:
+                print(
+                    label
+                    + ": Reused fingerprint-matched CA from "
+                    + str(ca_path)
+                    + " (file unchanged).",
+                    flush=True,
+                )
 
 
 def configure(args):
