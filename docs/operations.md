@@ -17,7 +17,7 @@ The installer does not install a scheduler, automatic upgrade job, backup tool, 
 
 To change LDAP/SMTP passwords, update the external service account under its normal rotation procedure, update the private config and rerun install. Verify actual authentication and notification delivery. Config and Secret hashes trigger a rollout only when necessary.
 
-Session/storage keys are generated on first install and reused thereafter. The installer refuses to generate replacements when a PVC exists but its encryption Secret is missing. Recover matching state through your operator-owned recovery process. Do not overwrite the storage key to "fix" a failed startup: that loses access to encrypted factors.
+Session/storage keys are generated on first install and reused thereafter. OIDC HMAC and RSA signing keys are generated when OIDC is first enabled, then preserved (including across temporary disabling). An established OIDC Secret missing its key material fails closed. No private key appears in the non-secret render artifact. The installer refuses to generate replacements when a PVC exists but its encryption Secret is missing. Recover matching state through your operator-owned recovery process. Do not overwrite the storage key to "fix" a failed startup: that loses access to encrypted factors.
 
 For an upgrade: review upstream release/migration notes, ensure your operator-owned protection/recovery procedure is ready, change `image` to an explicit tag/digest, then run install, doctor and real browser acceptance. Changing an image tag alone does not reverse a database migration.
 
@@ -25,7 +25,7 @@ Do not edit namespace or PVC size as an in-place migration. `local-path` is node
 
 ## Troubleshooting
 
-Command failures omit subprocess stderr deliberately because Kubernetes validation errors can echo Secret payloads. Inspect privately:
+Install prints flushed stage/readiness progress. Requests use a 20s Kubernetes timeout, a 45s process timeout and an approximately 300s readiness deadline. CrashLoop/image failures stop early with classified hints. Command failures omit raw stderr deliberately because Kubernetes validation errors can echo Secret payloads. Ctrl-C exits 130 without a traceback; changes already applied are preserved. Inspect privately:
 
 ```bash
 kubectl -n authelia get pods,pvc
@@ -39,6 +39,8 @@ Never publish raw credentials, LDAP DNs, email addresses or user details. Doctor
 | Symptom | Check |
 |---|---|
 | PVC Pending | local-path provisioner, node disk/readiness, pod scheduling; WaitForFirstConsumer is normal before scheduling |
+| x509 unknown authority / hostname | Select manual or fingerprint-verified endpoint CA trust for LDAP/SMTP; install validates files before cluster changes. Obtain missing roots independently; never bypass verification. |
+| Missing manual CA file | Place the verified PEM CA bundle at the exact printed path (default current_config/ldap-ca.pem or smtp-ca.pem), then rerun with the same --config. |
 | LDAP bind error 49 | Bind DN/password, account policy; production service account must be least privilege |
 | User/group absent | Base DN, filters, attribute mapping and disabled-account filtering |
 | SMTP startup fails | Relay authentication, CA, hostname/SAN, STARTTLS; never disable TLS checks |

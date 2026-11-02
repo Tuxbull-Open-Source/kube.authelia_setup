@@ -42,7 +42,7 @@ Install browser tooling **in the lab only** and run enrollment once on the fresh
 
 ```bash
 python3 -m venv /root/qa/venv
-/root/qa/venv/bin/pip install playwright
+/root/qa/venv/bin/pip install playwright pyjwt cryptography
 /root/qa/venv/bin/playwright install --with-deps chromium
 /root/qa/venv/bin/python tests/lab/enroll.py
 /root/qa/venv/bin/python tests/lab/acceptance.py
@@ -57,6 +57,17 @@ python3 tests/live.py --config current_config/config.json --yes-disposable
 `acceptance.py` verifies real Chromium LDAP+TOTP login, first-factor-only denial, internal forward-auth allow/default deny, logout, idle expiry with the page inactive, absolute expiry despite activity and no JavaScript exceptions. It saves a screenshot of the authenticated UI. The QA browser accepts its self-signed certificate only; separately verify HTTPS with the fixture CA. Public production TLS must use the operator's valid chain.
 
 `tests/live.py` intentionally deletes/reinstates the QA encryption Secret to prove fail-closed behavior, verifies unchanged reinstall (Secret data, PVC UID, pod template), rejects invalid configuration before application mutation, and runs doctor. **Never run this destructive test on a production namespace.**
+
+After the forward-auth/MFA tests, exercise native OIDC and endpoint trust:
+
+```bash
+/root/qa/venv/bin/python tests/lab/oidc.py
+/usr/bin/python3 tests/lab/trust.py
+```
+
+`oidc.py` configures public S256 clients, an explicit legacy no-PKCE client and a denied group policy. It tests real browser callbacks at `/auth/callback` and `/api/auth/oidc/callback`, token signatures/issuer/audience/nonce, userinfo groups, code replay, missing PKCE and group denial. Authelia 4.39.28 returns some failures to its authenticated portal; the test corroborates no code issuance with exact provider failure logs rather than assuming a particular error page. Callback handling is a test relying party, not a deployed production application.
+
+`trust.py` retrieves chains from actual LDAPS, LDAP StartTLS, SMTP STARTTLS and SMTP implicit TLS fixtures; rejects wrong pins, leaf-only chains and a server without STARTTLS; installs from pinned files twice; reproduces missing-CA CrashLoop in a separate disposable namespace and recovers it. It tests Authelia implicit SMTP startup plus an independently verified-TLS SMTP message. Actual Authelia notification delivery over STARTTLS is tested by `enroll.py`. QA self-signed CA/server certificates are never product provisioning.
 
 Velero backup/recovery is out of scope and not exercised or configured by this harness.
 
