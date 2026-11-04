@@ -245,15 +245,18 @@ def load(path):
 
 
 def ownership(c):
-    for kind, name in [
-        ("namespace", c["namespace"]),
+    resources = [
         ("pvc", "authelia-data"),
         ("secret", "authelia-secrets"),
         ("configmap", "authelia-config"),
         ("configmap", "authelia-ca"),
         ("deployment", "authelia"),
         ("service", "authelia"),
-    ] + ([("ingress", "authelia")] if c["ingress_enabled"] else []):
+    ]
+    if c["manage_namespace"]:
+        resources.insert(0, ("namespace", c["namespace"]))
+    resources += [("ingress", "authelia")] if c["ingress_enabled"] else []
+    for kind, name in resources:
         d = get(c, kind, name)
         if (
             d
@@ -422,7 +425,9 @@ def install(c):
         raise ValueError("local-path must use rancher.io/local-path")
     ownership(c)
     docs = render(c)
-    apply(docs[0])
+    namespace_doc = next((d for d in docs if d["kind"] == "Namespace"), None)
+    if namespace_doc:
+        apply(namespace_doc)
     s = secret_doc(
         c,
         get(c, "secret", "authelia-secrets"),
@@ -433,10 +438,10 @@ def install(c):
         json.dumps(s["data"], sort_keys=True).encode()
     ).hexdigest()
     print("[3/5] Server-side validation of application resources", flush=True)
-    for d in [s, *docs[1:]]:
+    for d in [s, *(d for d in docs if d["kind"] != "Namespace")]:
         apply(d, dry=True)
     print("[4/5] Applying resources (preserving existing keys and PVC)", flush=True)
-    for d in [s, *docs[1:]]:
+    for d in [s, *(d for d in docs if d["kind"] != "Namespace")]:
         apply(d)
     reconcile_ingress(c)
     print("[5/5] Checking rollout", flush=True)

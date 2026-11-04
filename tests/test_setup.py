@@ -19,8 +19,11 @@ class SetupTests(unittest.TestCase):
         c.update(ldap_password="test-only", smtp_password="test-only")
         docs = m.render(c)
         kinds = [d["kind"] for d in docs]
+        self.assertIn("Namespace", kinds)
         self.assertIn("PersistentVolumeClaim", kinds)
         self.assertIn("Ingress", kinds)
+        shared = dict(c, manage_namespace=False)
+        self.assertNotIn("Namespace", [d["kind"] for d in m.render(shared)])
         self.assertNotIn("Certificate", kinds)
         deploy = next(d for d in docs if d["kind"] == "Deployment")
         self.assertFalse(deploy["spec"]["template"]["spec"].get("enableServiceLinks", True))
@@ -46,6 +49,7 @@ class SetupTests(unittest.TestCase):
         for field, value in [
             ("url", "http://sso.example.com"),
             ("namespace", "default"),
+            ("manage_namespace", "false"),
             ("ldap_address", "ldap://ldap.example.com"),
             ("session_idle", "99h"),
             ("policy", "bypass"),
