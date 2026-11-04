@@ -244,8 +244,38 @@ def load(path):
     return c
 
 
+def exclusive_namespace(c):
+    """Reject any workload/configuration not owned by this installer.
+
+    Kubernetes automatically creates the default ServiceAccount and
+    kube-root-ca.crt ConfigMap. They are the only allowed unlabelled objects.
+    """
+    raw = kube(
+        "-n",
+        c["namespace"],
+        "get",
+        "deploy,statefulset,daemonset,job,cronjob,pod,service,ingress,pvc,configmap,secret,networkpolicy,role,rolebinding,serviceaccount",
+        "-o",
+        "json",
+    )
+    allowed = {("ConfigMap", "kube-root-ca.crt"), ("ServiceAccount", "default")}
+    for item in json.loads(raw).get("items", []):
+        identity = (item["kind"], item["metadata"]["name"])
+        if identity in allowed:
+            continue
+        labels = item["metadata"].get("labels", {})
+        if labels.get("app.kubernetes.io/managed-by") != LABEL["app.kubernetes.io/managed-by"]:
+            raise ValueError(
+                "namespace is not exclusive; refusing non-Authelia resource: "
+                + item["kind"].lower()
+                + "/"
+                + item["metadata"]["name"]
+            )
+
+
 def ownership(c):
     resources = [
+        ("namespace", c["namespace"]),
         ("pvc", "authelia-data"),
         ("secret", "authelia-secrets"),
         ("configmap", "authelia-config"),
@@ -253,8 +283,6 @@ def ownership(c):
         ("deployment", "authelia"),
         ("service", "authelia"),
     ]
-    if c["manage_namespace"]:
-        resources.insert(0, ("namespace", c["namespace"]))
     resources += [("ingress", "authelia")] if c["ingress_enabled"] else []
     for kind, name in resources:
         d = get(c, kind, name)
@@ -425,9 +453,8 @@ def install(c):
         raise ValueError("local-path must use rancher.io/local-path")
     ownership(c)
     docs = render(c)
-    namespace_doc = next((d for d in docs if d["kind"] == "Namespace"), None)
-    if namespace_doc:
-        apply(namespace_doc)
+    apply(docs[0])
+    exclusive_namespace(c)
     s = secret_doc(
         c,
         get(c, "secret", "authelia-secrets"),
@@ -438,10 +465,10 @@ def install(c):
         json.dumps(s["data"], sort_keys=True).encode()
     ).hexdigest()
     print("[3/5] Server-side validation of application resources", flush=True)
-    for d in [s, *(d for d in docs if d["kind"] != "Namespace")]:
+    for d in [s, *docs[1:]]:
         apply(d, dry=True)
     print("[4/5] Applying resources (preserving existing keys and PVC)", flush=True)
-    for d in [s, *(d for d in docs if d["kind"] != "Namespace")]:
+    for d in [s, *docs[1:]]:
         apply(d)
     reconcile_ingress(c)
     print("[5/5] Checking rollout", flush=True)
@@ -451,6 +478,7 @@ def install(c):
 
 def doctor(c):
     ownership(c)
+    exclusive_namespace(c)
     rollout(c)
     p = get(c, "pvc", "authelia-data")
     if not p or p["status"]["phase"] != "Bound":
@@ -723,6 +751,7 @@ def main():
             )
         elif args.action == "restart":
             ownership(c)
+            exclusive_namespace(c)
             kube("-n", c["namespace"], "rollout", "restart", "deployment/authelia")
             rollout(c)
             print("PASS restart")

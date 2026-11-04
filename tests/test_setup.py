@@ -22,8 +22,6 @@ class SetupTests(unittest.TestCase):
         self.assertIn("Namespace", kinds)
         self.assertIn("PersistentVolumeClaim", kinds)
         self.assertIn("Ingress", kinds)
-        shared = dict(c, manage_namespace=False)
-        self.assertNotIn("Namespace", [d["kind"] for d in m.render(shared)])
         self.assertNotIn("Certificate", kinds)
         deploy = next(d for d in docs if d["kind"] == "Deployment")
         self.assertFalse(deploy["spec"]["template"]["spec"].get("enableServiceLinks", True))
@@ -34,6 +32,10 @@ class SetupTests(unittest.TestCase):
         self.assertTrue(config["server"].get("disable_healthcheck", False))
         self.assertEqual(deploy["spec"]["replicas"], 1)
         self.assertEqual(deploy["spec"]["strategy"]["type"], "Recreate")
+        self.assertEqual(
+            deploy["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/managed-by"],
+            "kube.authelia_setup",
+        )
         self.assertEqual(
             next(d for d in docs if d["kind"] == "Service")["spec"]["type"], "ClusterIP"
         )

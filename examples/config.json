@@ -1,6 +1,5 @@
 {
   "namespace": "authelia",
-  "manage_namespace": true,
   "url": "https://sso.app.example.com",
   "ingress_enabled": true,
   "ingress_class": "traefik",

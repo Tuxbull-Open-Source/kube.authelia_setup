@@ -15,7 +15,6 @@ LABEL = {"app.kubernetes.io/managed-by": "kube.authelia_setup"}
 def defaults():
     return dict(
         namespace="authelia",
-        manage_namespace=True,
         url="https://sso.app.example.com",
         ingress_enabled=True,
         ingress_class="traefik",
@@ -196,9 +195,7 @@ def render(c):
             ("tmp", "/tmp", False),
         ]
     ]
-    docs = []
-    if c["manage_namespace"]:
-        docs.append(obj("Namespace", c["namespace"], c))
+    docs = [obj("Namespace", c["namespace"], c)]
     docs.extend(
         [
             obj(
@@ -265,7 +262,7 @@ def render(c):
                 selector=dict(matchLabels={"app": "authelia"}),
                 template=dict(
                     metadata=dict(
-                        labels={"app": "authelia"},
+                        labels={"app": "authelia", **LABEL},
                         annotations={
                             "config-sha256": hashlib.sha256(
                                 config.encode() + c["ca_pem"].encode()
@@ -332,8 +329,6 @@ def validate(c):
     for k, v in defaults().items():
         if k not in c or type(c[k]) is not type(v):
             raise ValueError("missing or invalid type: " + k)
-    if type(c["manage_namespace"]) is not bool:
-        raise ValueError("manage_namespace must be boolean")
     if c["ca_mode"] not in ("system", "manual", "fetch"):
         raise ValueError("ca_mode must be system, manual or fetch")
     if c["ca_mode"] != "system" and not c["ca_file"]:

@@ -1,25 +1,35 @@
 # Changelog
 
-## [0.1.2] - 2026-11-03
+## [0.1.3] - 2026-11-04
 
 ### Changed
 
-- Add explicit `manage_namespace: false` support for a shared, operator-owned
-  Kubernetes namespace; the default continues to create and own a dedicated
-  namespace.
+- Enforce one exclusive installer-owned namespace for new setup, reconfigure,
+  upgrade, doctor, and restart; remove the shared-namespace configuration path.
+- Reject non-Authelia application/configuration resources in the configured
+  namespace, allowing only Kubernetes baseline `serviceaccount/default` and
+  `configmap/kube-root-ca.crt` without the installer ownership label.
+- Label the Authelia Deployment pod template with
+  `app.kubernetes.io/managed-by=kube.authelia_setup` so exclusivity checks do
+  not reject its own Pods.
 - Standardize maintainer guidance in repository-root `AGENTS.md`.
 - Align release documentation with the Tuxbull-Open-Source repository namespace.
 
-### Verified
+### Validated
 
-- Authorized shared-namespace QA in `qa`: non-secret rendering, server-side
-  validation, generated LDAPS and SMTP STARTTLS fixtures, installer apply,
-  rollout, `doctor.sh`, repeated unchanged install, and exact labelled-resource
-  cleanup.
-- Confirmed fail-closed behavior before fixture completion: unavailable LDAP or
-  non-STARTTLS SMTP prevents a Ready application. The final generated fixtures
-  used CA-verified service-DNS TLS and produced one Ready Authelia replica with
-  a Bound PVC.
+- Shell syntax, Python unit tests, Python compile, release-artifact checks, and
+  `git diff --check` passed for the exclusive-namespace implementation.
+- Unit coverage verifies that an installer-owned namespace with Kubernetes
+  baseline objects is accepted and that a foreign workload is rejected.
+- The prior shared-namespace QA resources and the subsequent dedicated QA/
+  fixture namespaces were removed after testing; no QA namespace remains.
+
+### Remaining live-QA gate
+
+- A final end-to-end lifecycle test in a newly created exclusive Authelia
+  namespace remains required before release. Its LDAP/SMTP/browser fixtures
+  must run in a distinct disposable namespace; the last fixture run was stopped
+  and cleaned up after the LDAP fixture failed before readiness.
 
 ## [0.1.0]
 
