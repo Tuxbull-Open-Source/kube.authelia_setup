@@ -38,7 +38,7 @@ python3 tests/lab/deploy.py "$HOST"
 
 Fixtures require the standard single-node k3s pod CIDR/bridge. Adapt intentionally if different. `deploy.py` uses TLS only in the QA harness: it creates a self-signed secret/ingress, sets default two-factor policy and shorter session timeouts (30s idle / 2m absolute) for bounded acceptance. This browser harness disables product Ingress to use its separate QA HTTPS route. Product scripts own application Ingress routing but never provision TLS.
 
-For installer-owned Ingress acceptance on a **fresh namespace**, run `fixtures.py sso.app.example.com` and the SMTP fixture above, then **instead of `deploy.py`** run:
+For installer-owned Ingress acceptance, use a **fresh exclusive Authelia namespace**. Keep LDAP, SMTP, browser, and any other QA fixture outside that namespace; they are external dependencies, not Authelia workload resources. Then run `fixtures.py sso.app.example.com` and the SMTP fixture above, and **instead of `deploy.py`** run:
 
 ```bash
 python3 tests/lab/ingress.py --yes-disposable
@@ -75,7 +75,7 @@ After the forward-auth/MFA tests, exercise native OIDC and endpoint trust:
 
 `oidc.py` configures public S256 clients, an explicit legacy no-PKCE client and a denied group policy. It tests real browser callbacks at `/auth/callback` and `/api/auth/oidc/callback`, token signatures/issuer/audience/nonce, userinfo groups, code replay, missing PKCE and group denial. Authelia 4.39.28 returns some failures to its authenticated portal; the test corroborates no code issuance with exact provider failure logs rather than assuming a particular error page. Callback handling is a test relying party, not a deployed production application.
 
-`trust.py` retrieves chains from actual LDAPS, LDAP StartTLS, SMTP STARTTLS and SMTP implicit TLS fixtures; rejects wrong pins, leaf-only chains and a server without STARTTLS; installs from pinned files twice; reproduces missing-CA CrashLoop in a separate disposable namespace and recovers it. It tests Authelia implicit SMTP startup plus an independently verified-TLS SMTP message. Actual Authelia notification delivery over STARTTLS is tested by `enroll.py`. QA self-signed CA/server certificates are never product provisioning.
+`trust.py` retrieves chains from actual LDAPS, LDAP StartTLS, SMTP STARTTLS and SMTP implicit TLS fixtures; rejects wrong pins, leaf-only chains and a server without STARTTLS; installs from pinned files twice; reproduces missing-CA CrashLoop in a separate disposable namespace and recovers it. Keep all such fixtures outside the exclusive Authelia namespace. It tests Authelia implicit SMTP startup plus an independently verified-TLS SMTP message. Actual Authelia notification delivery over STARTTLS is tested by `enroll.py`. QA self-signed CA/server certificates are never product provisioning.
 
 Velero backup/recovery is out of scope and not exercised or configured by this harness.
 

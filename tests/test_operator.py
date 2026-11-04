@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 import cli
@@ -64,6 +65,23 @@ class OperatorTests(unittest.TestCase):
                 if proc.poll() is None:
                     proc.kill()
                     proc.wait()
+
+    def test_exclusive_namespace_rejects_foreign_resources(self):
+        c = cli.defaults()
+        owned = {"kind": "Deployment", "metadata": {"name": "authelia", "labels": cli.LABEL}}
+        owned_pod = {"kind": "Pod", "metadata": {"name": "authelia-abc", "labels": cli.LABEL}}
+        baseline = [
+            {"kind": "ConfigMap", "metadata": {"name": "kube-root-ca.crt", "labels": {}}},
+            {"kind": "ServiceAccount", "metadata": {"name": "default", "labels": {}}},
+            owned,
+            owned_pod,
+        ]
+        with patch.object(cli, "kube", return_value=json.dumps({"items": baseline}).encode()):
+            cli.exclusive_namespace(c)
+        foreign = {"kind": "Deployment", "metadata": {"name": "other-app", "labels": {}}}
+        with patch.object(cli, "kube", return_value=json.dumps({"items": [foreign]}).encode()):
+            with self.assertRaisesRegex(ValueError, "namespace is not exclusive"):
+                cli.exclusive_namespace(c)
 
     def test_oidc_rejects_unsafe_registry(self):
         c = cli.defaults()

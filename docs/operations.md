@@ -9,13 +9,13 @@
 
 Use one trusted admin host and one config path per installation. Scripts use a nonblocking local lock on `<config>.lock`; **this is not a distributed lock**. Do not operate concurrently from multiple hosts or race a GitOps controller. Server-side apply uses field manager `kube-authelia` and never forces ownership conflicts.
 
-Owned names are the configured namespace, `deployment/authelia`, `service/authelia`, `pvc/authelia-data`, `configmap/authelia-config`, optional `configmap/authelia-ca`, `secret/authelia-secrets`, and enabled `ingress/authelia`. Unmanaged existing resources are rejected before writes for enabled resources. Do not relabel another application's resources to bypass that protection.
+Owned names are the configured namespace, `deployment/authelia`, `service/authelia`, `pvc/authelia-data`, `configmap/authelia-config`, optional `configmap/authelia-ca`, `secret/authelia-secrets`, and enabled `ingress/authelia`. Every non-baseline namespaced resource must carry the installer ownership label; foreign resources are rejected before application writes. Do not relabel another application's resources to bypass that protection.
 
 ### Ingress upgrades and disabling
 
 New configs enable `ingress_enabled` with class `traefik`. Saved configs missing that field load as false, including noninteractive answer files; upgrade alone never enables exposure. Configure offers an explicit true/false prompt (blank preserves). After preparing operator-owned HTTPS and an existing controller, choose true and `ingress_class`, render/review, then install. The host is derived from `url`; no independent host override is needed. No TLS spec, certificates, issuers or controller are provisioned.
 
-`manage_namespace` defaults to `true`: the installer creates and labels the dedicated Namespace, then refuses to adopt unrelated resources. For an explicitly approved shared QA namespace only, set `manage_namespace: false`; the installer neither creates nor labels/adopts the Namespace, while retaining strict ownership checks for every Authelia resource.
+The installer creates and owns exactly one dedicated namespace. It refuses install, reconfigure, upgrade, doctor, or restart if the namespace contains any non-Authelia application/configuration resource. Kubernetes baseline `serviceaccount/default` and `configmap/kube-root-ca.crt` are the only unlabelled objects permitted. Do not place fixtures, databases, proxies, or any other workload in the Authelia namespace.
 
 With `ingress_enabled: false`, install deliberately deletes only `ingress/authelia` in the configured namespace **if its `app.kubernetes.io/managed-by` label equals `kube.authelia_setup`**. It re-reads ownership immediately before deletion and sends UID and resourceVersion preconditions; concurrent replacement/modification fails rather than deleting a different object. No broad label prune is used. Other names/namespaces and an unlabelled same-name external route are untouched. Render-only merely omits the Ingress; run install to reconcile removal. Repeated disabled installs are safe. Service, keys and PVC remain available for externally managed routing.
 
@@ -29,7 +29,7 @@ To change LDAP/SMTP passwords, update the external service account under its nor
 
 Session/storage keys are generated on first install and reused thereafter. OIDC HMAC and RSA signing keys are generated when OIDC is first enabled, then preserved (including across temporary disabling). An established OIDC Secret missing its key material fails closed. No private key appears in the non-secret render artifact. The installer refuses to generate replacements when a PVC exists but its encryption Secret is missing. Recover matching state through your operator-owned recovery process. Do not overwrite the storage key to "fix" a failed startup: that loses access to encrypted factors.
 
-For an upgrade: review upstream release/migration notes, ensure your operator-owned protection/recovery procedure is ready, change `image` to an explicit tag/digest, then run install, doctor and real browser acceptance. Changing an image tag alone does not reverse a database migration.
+For an upgrade: review upstream release/migration notes, ensure your operator-owned protection/recovery procedure is ready, confirm the namespace remains exclusive, change `image` to an explicit tag/digest, then run install, doctor and real browser acceptance. Changing an image tag alone does not reverse a database migration.
 
 Do not edit namespace or PVC size as an in-place migration. `local-path` is node-local, not HA, and its standard StorageClass does not support expansion. Monitor node disk space, pod restarts/readiness and external certificate expiry. In-memory sessions are lost on pod restart.
 
