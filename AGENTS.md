@@ -21,6 +21,8 @@ k3s. It is a Kubernetes installer project, not an Ansible Galaxy role.
 
 ## Verification
 
+Follow [the maintainer QA runbook](docs/maintainer-qa.md) before changing runtime defaults, secret wiring, or the installer lifecycle.
+
 Run before a PR:
 
 ```bash
