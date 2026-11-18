@@ -109,6 +109,8 @@ No automatic upgrade, key rotation, uninstall or PVC deletion. Review upstream m
 
 ## Tests
 
+Start with the [maintainer QA runbook](docs/maintainer-qa.md) for a cluster-free render check and the separate live qualification gates.
+
 ```bash
 bash -n configure.sh install.sh maintain.sh doctor.sh
 python3 -m unittest discover -s tests -v
