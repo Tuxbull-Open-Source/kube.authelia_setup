@@ -237,7 +237,7 @@ class RecoveryBackend:
         require(path.is_file() and not path.is_symlink(), "Metadata download unavailable")
         path.chmod(0o600)
         found = False
-        archived_deployments = []
+        archived_deployments = {}
         with tarfile.open(path, "r:gz") as archive:
             members = archive.getmembers()
             require(
@@ -254,7 +254,14 @@ class RecoveryBackend:
                 obj = json.load(archive.extractfile(member))
                 identity = obj.get("metadata", {})
                 if obj.get("kind") == "Deployment":
-                    archived_deployments.append(obj)
+                    # Velero writes preferred and version-qualified resource paths.
+                    # Identical aliases are one object; conflicts remain invalid.
+                    key = (obj.get("apiVersion"), identity.get("namespace"), identity.get("name"))
+                    require(
+                        key not in archived_deployments or archived_deployments[key] == obj,
+                        "Conflicting archived Deployment aliases",
+                    )
+                    archived_deployments[key] = obj
                 if "/cluster/" in member.name:
                     require(
                         obj.get("kind") == "Namespace"
@@ -281,7 +288,7 @@ class RecoveryBackend:
             else meta["imageProvenance"]["sourceImage"]
         )
         require(
-            self._workload_image(archived_deployments) == source_image,
+            self._workload_image(list(archived_deployments.values())) == source_image,
             "Archived Deployment differs from checkpoint source image",
         )
 
@@ -872,21 +879,35 @@ done"""
             # if helper absence cannot be proven. Never seal failed cleanup/resume.
             try:
                 self._remove_helper(meta)
-                require(not failed, "Backup failed; manual writer recovery required")
-                self._identity(ns)
-                require(
-                    not self._active() and self._quiet(ns), "Writer or Velero state is uncertain"
-                )
-                if not safety_only:
-                    self._resume(meta)
-                save(
-                    folder / "resume.json",
-                    {
-                        "resumed": not safety_only,
-                        "backupFailed": failed,
-                        "writersIntentionallyStopped": safety_only,
-                    },
-                )
+                if failed:
+                    # Propagate the original validation failure after safe cleanup.
+                    # Do not replace it with a generic resume error or restart writers.
+                    save(
+                        folder / "resume.json",
+                        {
+                            "resumed": False,
+                            "backupFailed": True,
+                            "manualRecoveryRequired": True,
+                            "replicas": meta["replicas"],
+                            "backup": name,
+                        },
+                    )
+                else:
+                    self._identity(ns)
+                    require(
+                        not self._active() and self._quiet(ns),
+                        "Writer or Velero state is uncertain",
+                    )
+                    if not safety_only:
+                        self._resume(meta)
+                    save(
+                        folder / "resume.json",
+                        {
+                            "resumed": not safety_only,
+                            "backupFailed": False,
+                            "writersIntentionallyStopped": safety_only,
+                        },
+                    )
             except BaseException:
                 save(
                     folder / "resume.json",

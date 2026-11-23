@@ -407,7 +407,15 @@ class RecoveryTests(unittest.TestCase):
         folder = self.folder / "archive"
         folder.mkdir()
         meta["imageProvenance"] = PROVENANCE
-        for case in ("good", "missing", "foreign", "cluster", "wrong-image"):
+        for case in (
+            "good",
+            "alias",
+            "conflicting-alias",
+            "missing",
+            "foreign",
+            "cluster",
+            "wrong-image",
+        ):
             deployment = copy.deepcopy(self.b.deps[0])
             deployment["kind"] = "Deployment"
             deployment["metadata"]["namespace"] = self.ns
@@ -418,6 +426,16 @@ class RecoveryTests(unittest.TestCase):
             records = [
                 ("resources/deployments.apps/namespaces/" + self.ns + "/authelia.json", deployment)
             ]
+            if case in ("alias", "conflicting-alias"):
+                alias = copy.deepcopy(deployment)
+                if case == "conflicting-alias":
+                    alias["metadata"]["labels"] = {"conflict": "true"}
+                records.append(
+                    (
+                        "resources/deployments.apps/v1/namespaces/" + self.ns + "/authelia.json",
+                        alias,
+                    )
+                )
             if case != "missing":
                 records.append(
                     (
@@ -457,11 +475,21 @@ class RecoveryTests(unittest.TestCase):
                     info.size = len(data)
                     archive.addfile(info, io.BytesIO(data))
             with patch.object(self.b, "_run", return_value=""), self.subTest(case=case):
-                if case == "good":
+                if case in ("good", "alias"):
                     r.RecoveryBackend._archive_scope(self.b, "backup", meta, folder)
                 else:
                     with self.assertRaises(r.RecoveryError):
                         r.RecoveryBackend._archive_scope(self.b, "backup", meta, folder)
+
+    def test_archive_failure_preserves_cause_without_resuming_writers(self):
+        with patch.object(
+            self.b,
+            "_archive_scope",
+            side_effect=r.RecoveryError("fixture archive validation failed"),
+        ):
+            with self.assertRaisesRegex(r.RecoveryError, "fixture archive validation failed"):
+                self.backup()
+        self.assertEqual(self.b.deps[0]["spec"]["replicas"], 0)
 
     def test_first_tag_only_backup_then_newer_upgrade_restores_old_pin(self):
         self.assertEqual(self.b._workload_image(self.b.deps), SOURCE_IMAGE)
