@@ -354,6 +354,7 @@ class CoordinatorTests(unittest.TestCase):
             patch.object(host, "trusted", side_effect=Path),
             patch.object(host.os, "geteuid", return_value=0),
             patch.object(host.os, "umask"),
+            patch.object(host.sys, "version_info", (3, 12, 0)),
             patch.object(host, "shared_provision_lock", side_effect=contextlib.nullcontext),
             patch.object(host, "dispatch") as dispatch,
         ):
@@ -366,6 +367,17 @@ class CoordinatorTests(unittest.TestCase):
                     self.assertEqual(parsed.backup, "cold-old")
                 if command == "plan":
                     self.assertTrue(parsed.latest_stable)
+
+    def test_privileged_dispatch_rejects_older_interpreter(self):
+        with (
+            patch.object(host, "trusted", side_effect=Path),
+            patch.object(host.os, "geteuid", return_value=0),
+            patch.object(host.sys, "version_info", (3, 10, 0)),
+            patch.object(host, "dispatch") as dispatch,
+        ):
+            with self.assertRaisesRegex(host.Error, "Protected system Python 3.12 required"):
+                host.main(["--checkout", "/fixture", "status"])
+        dispatch.assert_not_called()
 
     def test_patch_family(self):
         host.patch_family(
