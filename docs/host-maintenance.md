@@ -167,8 +167,13 @@ explicitly excluded and the native metadata archive is inspected privately for
 scope. The database and its matching Kubernetes encryption/signing keys belong to
 one checkpoint.
 
-Restore first creates a safety backup, then replaces only the bound namespace and
-claim with the selected point. Subsequent writes are lost. Old claim bindings are
+Restore first creates a safety-only data/resource checkpoint, then replaces only
+the bound namespace and claim with the selected point. A failing current image
+need not become Ready or establish normal image provenance for this forensic
+checkpoint. Its matching keys and namespace/PVC identities must still be intact.
+Safety-only checkpoints are not normal eligible application recovery points and
+never receive a successful-resume seal. Capture/coverage/helper-cleanup failure
+blocks namespace deletion; the selected good point retains every eligibility gate. Subsequent writes are lost. Old claim bindings are
 removed so storage is dynamically recreated. The PV resource type remains permitted
 in Restore because Velero requires it to create filesystem PVRs, even though source
 PV manifests are deliberately absent from the backup. Applications remain stopped

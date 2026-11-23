@@ -9,7 +9,7 @@
 **Installer candidate: 0.2.0 (unreleased).** Installer versions are independent of
 Authelia image versions. Updating the checkout alone does not upgrade the service.
 See the [changelog](CHANGELOG.md), [0.2.0 release handoff](docs/release-0.2.0.md)
-and the maintenance boundaries below.
+and the [native qualification](docs/qa-maintenance.md).
 
 Set up **native single sign-on for web applications** with Authelia on Kubernetes/k3s. Applications supporting OpenID Connect redirect users to a central login portal, authenticate against your LDAP directory, and receive an authorization code at their registered callback. LDAP groups control which clients users may access; two-factor authentication is the recommended default.
 

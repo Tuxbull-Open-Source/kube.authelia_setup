@@ -19,8 +19,12 @@
 - Keep private configuration, credentials, rendered data and recovery artifacts
   outside Git; add local/hosted regression checks under multiple umasks.
 
-This is an unreleased development candidate. Live qualification and current-head
-CI must pass before handoff; no production deployment is implied by this entry.
+This is an unreleased development candidate. The [native qualification](docs/qa-maintenance.md)
+records actual 4.39.27 → 4.39.28 upgrade and failed-workload recovery of encrypted
+fixture data, matching keys and the original immutable image. It also records
+Kubernetes default-field and Velero archive-alias fixes found by the live run.
+Current-head CI must still be verified before handoff; no production deployment
+or published release is implied by this entry.
 
 ## [0.1.3] - 2026-11-04
 
