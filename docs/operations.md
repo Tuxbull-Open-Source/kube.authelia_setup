@@ -2,8 +2,14 @@
 
 ## Lifecycle and ownership
 
-- `./maintain.sh status`: list workload, Service and PVC status.
-- `./maintain.sh restart`: restart the one application deployment and wait for readiness.
+- `./maintain.sh status`: read-only status through the enrolled host controller.
+- `./maintain.sh plan --latest-stable`: prepare a pinned same-family patch plan.
+- `./maintain.sh upgrade EXACT_PLAN`: cold backup, supervised installation and checks.
+- `./maintain.sh logs EXACT_OPERATION`: inspect durable progress and failure state.
+- `./maintain.sh backup`, `list-backups`, and `restore EXACT_BACKUP --accept-data-loss`: repository-owned Velero recovery.
+
+See [host maintenance](host-maintenance.md) for reviewed bootstrap and enrollment.
+The old unbound `maintain.sh restart` path is not part of the enrolled interface.
 - `./install.sh`: converge the configured image, configuration and credentials.
 - `./doctor.sh`: verify ownership, rollout, one Ready pod, Bound PVC, upstream config validation and real internal HTTP health.
 
@@ -21,7 +27,7 @@ With `ingress_enabled: false`, install deliberately deletes only `ingress/authel
 
 Prepare an alternative route before disabling if continuity is required. Do not run two routes for the same hostname simultaneously. Enabling with an external same-name route fails before resource writes: deliberately migrate/rename that operator-owned route yourself, or keep routing disabled. Changing `url` or class updates the owned route; validate DNS, controller selection, HTTPS termination and a real login independently. Doctor checks internal health, not end-to-end external HTTPS. Namespace changes are not a migration and do not clean up the old namespace's route.
 
-The installer does not install a scheduler, automatic upgrade job, backup tool, TLS component or Velero. **Backup and recovery are entirely operator-owned through Velero; this product has no backup/restore commands.** The operator is responsible for consistent PVC contents, the matching encryption Secret, private configuration, retention and recovery verification. No Velero installation, configuration or validation is performed here.
+The installer does not install a scheduler, unattended upgrade job, TLS component or Velero. Enrolled maintenance validates existing Velero/Kopia prerequisites and orchestrates a namespace-scoped cold checkpoint of the data PVC and matching keys. Infrastructure, storage credentials, retention policy and application recovery acceptance remain operator responsibilities.
 
 ## Changes
 
@@ -29,7 +35,7 @@ To change LDAP/SMTP passwords, update the external service account under its nor
 
 Session/storage keys are generated on first install and reused thereafter. OIDC HMAC and RSA signing keys are generated when OIDC is first enabled, then preserved (including across temporary disabling). An established OIDC Secret missing its key material fails closed. No private key appears in the non-secret render artifact. The installer refuses to generate replacements when a PVC exists but its encryption Secret is missing. Recover matching state through your operator-owned recovery process. Do not overwrite the storage key to "fix" a failed startup: that loses access to encrypted factors.
 
-For an upgrade: review upstream release/migration notes, ensure your operator-owned protection/recovery procedure is ready, confirm the namespace remains exclusive, change `image` to an explicit tag/digest, then run install, doctor and real browser acceptance. Changing an image tag alone does not reverse a database migration.
+For a patch upgrade: review upstream release/migration notes, confirm the namespace remains exclusive, prepare with `./maintain.sh plan --latest-stable`, inspect the target, then run `./maintain.sh upgrade EXACT_PLAN`. The native worker requires its cold backup before installation. Finish with doctor and real browser acceptance. Cross-family migrations need a separately qualified procedure. Changing an image tag alone does not reverse a database migration.
 
 Do not edit namespace or PVC size as an in-place migration. `local-path` is node-local, not HA, and its standard StorageClass does not support expansion. Monitor node disk space, pod restarts/readiness and external certificate expiry. In-memory sessions are lost on pod restart.
 
@@ -68,4 +74,4 @@ To stop without deleting data:
 kubectl -n authelia scale deployment/authelia --replicas=0
 ```
 
-Permanent removal is a deliberate operator action outside the scripts. **Deleting the namespace/PVC with local-path's Delete reclaim policy destroys node-local data.** No installer or maintenance command deletes a PVC or namespace.
+Permanent removal is a deliberate operator action outside the scripts. **Deleting the namespace/PVC with local-path's Delete reclaim policy destroys node-local data.** The installer does not delete the PVC or namespace. Explicit native restore DOES replace the bound namespace/PVC after a safety checkpoint and loses subsequent writes; use an exact qualified backup and the required data-loss acknowledgment.

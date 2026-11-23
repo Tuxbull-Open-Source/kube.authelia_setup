@@ -11,6 +11,6 @@
 - Sessions use process memory and secure cookies; remember-me is disabled. Restart logs everyone out. A live portal can generate activity, so test inactivity with the page closed/blank, not an actively polling portal.
 - Direct application access must not bypass your proxy's authorization boundary. This product exposes only ClusterIP but does not impose a network policy automatically because proxy/LDAP/SMTP locations vary. Apply a reviewed NetworkPolicy and firewall rules for your topology, restrict port 9091 to trusted callers, and protect downstream applications separately. Do not trust identity headers sent directly by clients.
 - `examples/forward-auth.yaml` is an operator-applied example, not an automatically installed middleware or a Hermes integration. Proxy sanitization and routing must be verified end to end.
-- Backup/recovery is operator-owned with Velero; this installer has no backup/restore feature and does not install or configure Velero. Protect PVC contents and matching encryption Secrets as sensitive state.
+- Infrastructure remains operator-owned. Native maintenance uses existing Velero/Kopia for cold data-and-key checkpoints and exact-name restore; it never installs Velero or grants new access. Protect PVC contents, matching encryption Secrets, kubeconfigs and private host operation artifacts as sensitive state.
 
 Report security defects privately to the repository maintainer. Never attach real config files, kubeconfigs, passwords, session cookies, TOTP seeds or raw debug dumps to public issues.
