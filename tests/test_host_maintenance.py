@@ -30,6 +30,37 @@ stable = load("stable_images")
 
 
 class CoordinatorTests(unittest.TestCase):
+    def test_mount_false_default_is_not_drift_but_real_changes_are(self):
+        live = {
+            "kind": "Deployment",
+            "metadata": {"name": "authelia", "namespace": "qa"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "authelia",
+                                "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        before = {"deployments": [live], "pvcs": []}
+        target = copy.deepcopy(live)
+        mount = target["spec"]["template"]["spec"]["containers"][0]["volumeMounts"][0]
+        mount["readOnly"] = False
+        host.protected_contract(before, [target], "qa")
+        for field, value in [("readOnly", True), ("mountPath", "/other"), ("subPath", "other")]:
+            with self.subTest(field=field):
+                changed = copy.deepcopy(target)
+                changed["spec"]["template"]["spec"]["containers"][0]["volumeMounts"][0][field] = (
+                    value
+                )
+                with self.assertRaisesRegex(host.Error, "Volume mount contract changed"):
+                    host.protected_contract(before, [changed], "qa")
+
     def test_missing_keys_fail_without_generation(self):
         import base64
 

@@ -411,10 +411,15 @@ def protected_contract(before, docs, namespace):
                     }
 
                 require(env(source) == env(target), "Authentication/runtime environment changed")
-                require(
-                    source.get("volumeMounts", []) == target.get("volumeMounts", []),
-                    "Volume mount contract changed",
-                )
+
+                def mounts(c):
+                    # The API omits the false default; preserve every other field.
+                    return [
+                        mount | {"readOnly": mount.get("readOnly", False)}
+                        for mount in c.get("volumeMounts", [])
+                    ]
+
+                require(mounts(source) == mounts(target), "Volume mount contract changed")
 
         def claims(spec):
             return {
