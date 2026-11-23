@@ -2,8 +2,8 @@
 
 This records a disposable synthetic test, not production certification. Runtime
 qualification used executable revision
-`c13133aac09cb8d248edc3f24d05f131ab0ebbfc`. Later release-documentation changes do
-not imply a second deployment or different executable qualification.
+`c13133aac09cb8d248edc3f24d05f131ab0ebbfc`. Later release-documentation and test-only
+changes do not alter that operational code or imply a second deployment.
 
 ## Environment and interface
 
