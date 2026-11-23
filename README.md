@@ -1,5 +1,16 @@
 # kube.authelia_setup
 
+> [!WARNING]
+> **Proof of concept — lab and agent experimentation only. Never use in production environments.**
+> This installer supports rapid deployment and evaluation, not a turnkey production
+> platform. Upgrading a customized installation requires Kubernetes and Authelia
+> experience and willingness to understand the underlying system.
+
+**Installer candidate: 0.2.0 (unreleased).** Installer versions are independent of
+Authelia image versions. Updating the checkout alone does not upgrade the service.
+See the [changelog](CHANGELOG.md), [0.2.0 release handoff](docs/release-0.2.0.md)
+and the [native qualification](docs/qa-maintenance.md).
+
 Set up **native single sign-on for web applications** with Authelia on Kubernetes/k3s. Applications supporting OpenID Connect redirect users to a central login portal, authenticate against your LDAP directory, and receive an authorization code at their registered callback. LDAP groups control which clients users may access; two-factor authentication is the recommended default.
 
 For applications without OIDC, optional reverse-proxy forward authentication protects an explicit hostname/group. Gateway authentication alone does not replace application-local login.
@@ -14,7 +25,7 @@ cd kube.authelia_setup
 # Inspect current_config/artifacts/resources.json (no passwords or signing keys).
 ./install.sh
 ./doctor.sh
-./maintain.sh status
+# Enroll reviewed host maintenance before using maintain.sh (see below).
 ```
 
 The interactive configurator saves private JSON (0600), then installs unless `--no-install` is used. Passwords are hidden. Blank answers preserve existing settings; `-` disables the optional forward-auth hostname. OIDC clients/policies are loaded from JSON files when prompted: start with [clients](examples/oidc-clients.json) and [policies](examples/oidc-policies.json), changing IDs and exact callback URLs for your applications. No application client secret is needed: this version supports **public authorization-code clients**, not confidential clients.
@@ -30,7 +41,7 @@ chmod 600 /secure/authelia.json
 ./doctor.sh --config /secure/authelia.json
 ```
 
-Every script accepts `--config`; precedence is explicit `--config`, then `CONFIG_FILE`, then `current_config/config.json`. JSON is data, never sourced as shell code. Unknown fields/options fail. Existing values, inline CA bundles, and forward-auth rules are preserved. New fields acquire defaults **except `ingress_enabled`: a saved config without this field remains disabled**, avoiding silent exposure on upgrade.
+Configure, install and doctor accept `--config`; precedence is explicit `--config`, then `CONFIG_FILE`, then `current_config/config.json`. Enrolled maintenance deliberately uses exactly `current_config/config.json` in its own checkout, without an alternate target selector. JSON is data, never sourced as shell code. Unknown fields/options fail. Existing values, inline CA bundles, and forward-auth rules are preserved. New fields acquire defaults **except `ingress_enabled`: a saved config without this field remains disabled**, avoiding silent exposure on upgrade.
 
 ## Portal Ingress routing (TLS remains operator-owned)
 
@@ -89,9 +100,9 @@ Bundles must contain only parseable, nonexpired PEM certificates with `CA:TRUE`;
 - External LDAP service account, real user/group/mail attributes and a working TLS SMTP relay. LDAP and SMTP are external dependencies: this installer does not deploy or manage either service. LDAP password reset is disabled; use a read-only service account.
 - Operator-owned public DNS and HTTPS termination for the portal, reaching the installer-owned Ingress through your existing controller, or an external route to `authelia.authelia.svc.cluster.local:9091` when Ingress is disabled. Preserve Host/HTTPS forwarding and strip untrusted identity/forwarding headers. **Never expose 9091 directly to the Internet.**
 
-Not installed or managed: k3s, ingress controllers, DNS, public TLS certificates/issuers, cert-manager, ACME, LDAP, SMTP, Redis, applications or Velero. LDAP and SMTP endpoints are external dependencies, not workloads in the Authelia namespace. No system services, cron jobs or reboot are performed. Kubernetes downloads the pinned image on first use. QA-only certificates and services live in the isolated [lab harness](tests/lab/README.md).
+Not installed or managed: k3s, ingress controllers, DNS, public TLS certificates/issuers, cert-manager, ACME, LDAP, SMTP, Redis, applications or Velero. LDAP and SMTP endpoints are external dependencies, not workloads in the Authelia namespace. No schedulers, package installation or reboot are performed by the application installer. Enrolled maintenance uses transient host systemd workers and reviewed, root-protected host tools. Kubernetes downloads the selected image on first use. QA-only certificates and services live in the isolated [lab harness](tests/lab/README.md).
 
-SQLite and encrypted factor data live on the 1Gi `authelia-data` PVC. **Not HA:** local-path is node-local; node loss can lose data. Its standard class does not support expansion. Sessions are in memory and are lost on pod restart. Backup/recovery is operator-owned through Velero; the product has no backup/restore commands and does not install/configure Velero.
+SQLite and encrypted factor data live on the 1Gi `authelia-data` PVC. **Not HA:** local-path is node-local; node loss can lose data. Its standard class does not support expansion. Sessions are in memory and are lost on pod restart. Enrolled maintenance provides backup/restore commands using existing Velero 1.18+ and Kopia infrastructure; it does not install or configure Velero, storage credentials or backup schedules. External LDAP/SMTP and client applications are outside this recovery scope.
 
 ## Operation and failure handling
 
@@ -99,24 +110,51 @@ Install prints flushed stages (trust, ownership/storage, dry-run, apply, rollout
 
 Reruns preserve keys and PVC identity; unchanged configuration does not restart the pod. Missing encryption Secret beside a PVC fails closed. Server-side dry-run precedes application writes; namespace creation can occur before that validation. See [operations](docs/operations.md), [security](docs/security.md), [OIDC integration](docs/oidc.md), [QA evidence](docs/qa.md), and [attribution](NOTICE.md).
 
+After administrator-reviewed host bootstrap and checkout enrollment:
+
 ```bash
 ./maintain.sh status
-./maintain.sh restart
+./maintain.sh plan --latest-stable
+./maintain.sh upgrade EXACT_PLAN_ID
+./maintain.sh logs EXACT_OPERATION_ID
+./maintain.sh backup
+./maintain.sh list-backups
+./maintain.sh restore EXACT_ELIGIBLE_BACKUP --accept-data-loss
 ./doctor.sh
 ```
 
-No automatic upgrade, key rotation, uninstall or PVC deletion. Review upstream migrations before changing the pinned image; changing it back does not undo a database migration.
+Use [host maintenance](docs/host-maintenance.md) for prerequisite settings,
+reviewed bootstrap, enrollment and recovery semantics. Maintenance requires a
+root-protected **`/usr/bin/python3.12`**, systemd, existing sudo rights, Git,
+kubectl, Velero, OpenSSL and ordinary Linux utilities. It never runs an
+operator-writable Python environment as root and does not alter sudo policy.
+No-argument invocation shows help; `status` and `list-backups` do not change state.
+
+`plan` freezes a same-major/minor stable patch target and checks preservation;
+`upgrade` takes a cold Velero backup before applying the installer. The worker
+survives disconnection and logs its durable phase outside the application PVC.
+A successful rollout persists its exact image pin into the existing private
+configuration. Authentication keys and PVC identities are not rotated.
+
+Restore creates a safety backup, replaces the selected namespace/PVC and loses
+writes after the selected recovery point. It restores the matching database and
+keys; identity re-enrollment is required afterward. A failed restore keeps
+uncertain writers stopped rather than attempting a second destructive action.
+There is no automatic image downgrade, schema downgrade, key rotation or uninstall.
+Cross-major/minor migrations require a separately qualified procedure. Ready Pods
+alone are not application acceptance: verify schema/encryption, health, login and
+OIDC clients after the operation.
 
 ## Tests
 
 Start with the [maintainer QA runbook](docs/maintainer-qa.md) for a cluster-free render check and the separate live qualification gates.
 
 ```bash
-bash -n configure.sh install.sh maintain.sh doctor.sh
+bash -n configure.sh install.sh maintain.sh doctor.sh provision-host.sh
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q scripts tests
 ruff check scripts tests
 ruff format --check scripts tests
 ```
 
-Live/browser acceptance is separate from the local suite. Public CI is not configured. The disposable lab exercises real LDAP/SMTP, native OIDC callbacks, token validation, PKCE, group denial, MFA and reruns; it is not a claim of production FreeIPA/AD or application-specific cutover validation.
+Live/browser acceptance is separate from the local suite. Hosted CI runs local contracts under Python 3.10/3.12 and umask 022/077; privileged execution requires the fixed system Python 3.12. CI does not claim a live Kubernetes recovery test. The disposable lab exercises real LDAP/SMTP, native OIDC callbacks, token validation, PKCE, group denial, MFA and reruns; it is not a claim of production FreeIPA/AD or application-specific cutover validation.

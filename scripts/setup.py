@@ -15,6 +15,10 @@ LABEL = {"app.kubernetes.io/managed-by": "kube.authelia_setup"}
 def defaults():
     return dict(
         namespace="authelia",
+        kubeconfig="",
+        velero_namespace="velero",
+        velero_storage_location="",
+        velero_backup_ttl="720h",
         url="https://sso.app.example.com",
         ingress_enabled=True,
         ingress_class="traefik",
@@ -337,6 +341,18 @@ def validate(c):
         raise ValueError("smtp_ca_mode must be system, manual or fetch")
     if c["smtp_ca_mode"] != "system" and not c["smtp_ca_file"]:
         raise ValueError("smtp_ca_file required")
+    if c["kubeconfig"] and not Path(c["kubeconfig"]).is_absolute():
+        raise ValueError("kubeconfig must be an absolute protected path")
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", c["velero_namespace"]):
+        raise ValueError("invalid velero_namespace")
+    if c["velero_namespace"] == c["namespace"]:
+        raise ValueError("Velero must use a separate namespace")
+    if c["velero_storage_location"] and not re.fullmatch(
+        r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", c["velero_storage_location"]
+    ):
+        raise ValueError("invalid velero_storage_location")
+    if not re.fullmatch(r"[1-9][0-9]*h", c["velero_backup_ttl"]):
+        raise ValueError("velero_backup_ttl must be positive whole hours")
     ns = c["namespace"]
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,61}[a-z0-9]", ns) or ns in (
         "default",

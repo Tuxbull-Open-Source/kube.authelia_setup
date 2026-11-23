@@ -519,6 +519,27 @@ def doctor(c):
     )
 
 
+def storage_checks(c):
+    """Read-only native storage gates; never invoke schema migrations or key rotation."""
+    prefix = ["-n", c["namespace"], "exec", "deployment/authelia", "--", "authelia"]
+    config = ["--config", "/config/configuration.yml"]
+    if c["oidc_clients"]:
+        config += ["--config", "/secrets/oidc.yml"]
+    schema = kube(*prefix, "storage", "schema-info", *config).decode(errors="replace")
+    # Authelia 4.39's native output (storage_run.go): failures may still exit zero.
+    fields = dict(line.split(": ", 1) for line in schema.splitlines() if ": " in line)
+    if (
+        not fields.get("Schema Version")
+        or fields.get("Schema Upgrade Available") != "no"
+        or fields.get("Schema Encryption Key") != "valid"
+    ):
+        raise ValueError("storage schema/key validation failed; inspect privately")
+    encryption = kube(*prefix, "storage", "encryption", "check", *config)
+    if b"Storage Encryption Key Validation: SUCCESS" not in encryption.splitlines():
+        raise ValueError("storage encryption check did not report SUCCESS")
+    print("PASS storage schema and encryption; no schema rollback attempted")
+
+
 def ca_details(pem):
     """Display-only identities; never evidence that a candidate is authentic."""
     try:
@@ -706,6 +727,10 @@ def configure(args):
 def main():
     os.umask(0o077)
     mode = sys.argv[1]
+    if mode == "maintain":
+        raise ValueError(
+            "Use ./maintain.sh and the enrolled host coordinator; direct maintenance is disabled"
+        )
     p = argparse.ArgumentParser(
         prog=mode + ".sh",
         description="Standalone Authelia with configurable Ingress routing (new configs enabled; legacy configs opt in). TLS, ingress controller and LDAP/SMTP services remain operator-owned.",

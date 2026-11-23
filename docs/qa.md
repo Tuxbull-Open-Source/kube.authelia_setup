@@ -1,5 +1,10 @@
 # Validation evidence
 
+The sections below retain historical installer qualification. For the new 0.2.0
+host-supervised upgrade/recovery path, see [native maintenance qualification](qa-maintenance.md).
+Historical statements about removed recovery or absent CI describe those older
+revisions, not the new candidate.
+
 ## Installer-owned Ingress follow-up — 2026-11-02
 
 A new disposable Hetzner fsn1/cx23 Ubuntu **24.04.4 LTS** VM ran **k3s v1.34.1+k3s1**, standard Traefik/local-path, and Authelia **4.39.28** with isolated real LDAPS and SMTP STARTTLS fixtures. The final application container was Ready with restartCount=0 and image digest `sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54`.

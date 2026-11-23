@@ -55,7 +55,8 @@ python3 -m venv /root/qa/venv
 /root/qa/venv/bin/python tests/lab/enroll.py
 /root/qa/venv/bin/python tests/lab/acceptance.py
 python3 tests/live.py --config current_config/config.json --yes-disposable
-./maintain.sh restart
+# Native maintenance needs reviewed bootstrap and a non-root enrolled checkout.
+# Follow docs/host-maintenance.md for that separate qualification.
 ./doctor.sh
 /root/qa/venv/bin/python tests/lab/acceptance.py
 ```
@@ -77,6 +78,6 @@ After the forward-auth/MFA tests, exercise native OIDC and endpoint trust:
 
 `trust.py` retrieves chains from actual LDAPS, LDAP StartTLS, SMTP STARTTLS and SMTP implicit TLS fixtures; rejects wrong pins, leaf-only chains and a server without STARTTLS; installs from pinned files twice; reproduces missing-CA CrashLoop in a separate disposable namespace and recovers it. Keep all such fixtures outside the exclusive Authelia namespace. It tests Authelia implicit SMTP startup plus an independently verified-TLS SMTP message. Actual Authelia notification delivery over STARTTLS is tested by `enroll.py`. QA self-signed CA/server certificates are never product provisioning.
 
-Velero backup/recovery is out of scope and not exercised or configured by this harness.
+These legacy LDAP/SMTP/browser helpers do not exercise or configure Velero. The 0.2.0 native maintenance/recovery path requires its own supervised backup, upgrade and restore qualification; see [host maintenance](../../docs/host-maintenance.md).
 
 After collecting only sanitized PASS/FAIL evidence, delete the temporary VM and its temporary SSH key, IPs and any other task-created cloud resources; poll the provider API to verify absence. Do not leave a paid VM running or publish its actual IP, private key, kubeconfig, database, cookies or credentials.

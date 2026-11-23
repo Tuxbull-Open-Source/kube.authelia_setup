@@ -1,5 +1,9 @@
 {
   "namespace": "authelia",
+  "kubeconfig": "",
+  "velero_namespace": "velero",
+  "velero_storage_location": "default",
+  "velero_backup_ttl": "720h",
   "url": "https://sso.app.example.com",
   "ingress_enabled": true,
   "ingress_class": "traefik",

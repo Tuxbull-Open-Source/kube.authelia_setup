@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0] - Unreleased
+
+### Maintenance candidate
+
+- Add repository-owned, checkout-bound maintenance with explicit version planning,
+  supervised patch upgrades and persisted image pins.
+- Use existing Velero/Kopia infrastructure for a cold backup of the single
+  `authelia-data` PVC before any image upgrade.
+- Preserve matching database encryption/session/OIDC keys and namespace metadata;
+  do not treat an image downgrade as a database rollback.
+- Keep reviewed host provisioning, recovery and operation coordination in this
+  repository, separate from other applications' installed control paths.
+- Enrolled maintenance replaces the old unbound status/restart dispatcher; the
+  legacy direct restart path is intentionally unavailable. Configure/install/doctor
+  retain their explicit configuration interface, while maintenance uses one bound
+  `current_config/config.json` per checkout.
+- Keep private configuration, credentials, rendered data and recovery artifacts
+  outside Git; add local/hosted regression checks under multiple umasks.
+
+This is an unreleased development candidate. The [native qualification](docs/qa-maintenance.md)
+records actual 4.39.27 → 4.39.28 upgrade and failed-workload recovery of encrypted
+fixture data, matching keys and the original immutable image. It also records
+Kubernetes default-field and Velero archive-alias fixes found by the live run.
+Current-head CI must still be verified before handoff; no production deployment
+or published release is implied by this entry.
+
 ## [0.1.3] - 2026-11-04
 
 ### Changed
